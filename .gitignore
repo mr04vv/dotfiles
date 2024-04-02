@@ -4,6 +4,7 @@
 
 ### white list ###
 
+
 ### config ###
 !/.config/
 !/.config/**
@@ -34,3 +35,4 @@
 !.linkignore
 !/LICENSE
 !/README.md
+!.zshenv
