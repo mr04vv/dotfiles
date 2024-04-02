@@ -1,0 +1,36 @@
+### all ignore for white list ###
+/*
+/.**
+
+### white list ###
+
+### config ###
+!/.config/
+!/.config/**
+
+### lazygit ###
+!/.config/lazygit/
+!/.config/lazygit/**
+/.config/lazygit/state.yml
+
+### nvim ###
+!/.config/nvim/
+!/.config/nvim/**
+
+### wezterm ###
+!/.config/wezterm/
+!/.config/wezterm/**
+
+### github ###
+!/.github
+!/.github/**
+
+### global ###
+!/install.sh
+!/scripts/
+!/scripts/**
+!.gitignore
+!.gitkeep
+!.linkignore
+!/LICENSE
+!/README.md
