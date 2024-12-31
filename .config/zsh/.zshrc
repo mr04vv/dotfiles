@@ -1,83 +1,27 @@
-# Fig pre block. Keep at the top of this file.
-[[ -f "$HOME/.fig/shell/zshrc.pre.zsh" ]] && builtin source "$HOME/.fig/shell/zshrc.pre.zsh"
-
-# Start configuration added by Zim install {{{
-#
-# User configuration sourced by interactive shells
-#
-
-# -----------------
-# Zsh configuration
-# -----------------
-
-#
-# History
-#
-
-# Remove older command from the history if a duplicate is to be added.
-setopt HIST_IGNORE_ALL_DUPS
-
-#
-# Input/output
-#
-
+# Amazon Q pre block. Keep at the top of this file.
+[[ -f "${HOME}/Library/Application Support/amazon-q/shell/zshrc.pre.zsh" ]] && builtin source "${HOME}/Library/Application Support/amazon-q/shell/zshrc.pre.zsh"
+# #
+# # Input/output
+# #
+HISTFILE=~/.zsh_history
+HISTSIZE=100
+SAVEHIST=100
 # Set editor default keymap to emacs (`-e`) or vi (`-v`)
-bindkey -v
-
-# Prompt for spelling correction of commands.
-#setopt CORRECT
-
-# Customize spelling correction prompt.
-#SPROMPT='zsh: correct %F{red}%R%f to %F{green}%r%f [nyae]? '
+bindkey -e
+setopt share_history 
+setopt append_history        # 履歴を追加 (毎回 .zsh_history を作るのではなく)
+autoload -U history-search-end
+zle -N history-beginning-search-backward-end history-search-end
+zle -N history-beginning-search-forward-end history-search-end
+bindkey "^[[A" history-beginning-search-backward-end
+bindkey "^[[B" history-beginning-search-forward-end
 
 # Remove path separator from WORDCHARS.
-WORDCHARS=${WORDCHARS//[\/]}
+# WORDCHARS=${WORDCHARS//[\/]}
 
 # -----------------
 # Zim configuration
 # -----------------
-
-# Use degit instead of git as the default tool to install and update modules.
-#zstyle ':zim:zmodule' use 'degit'
-
-# --------------------
-# Module configuration
-# --------------------
-
-#
-# git
-#
-
-# Set a custom prefix for the generated aliases. The default prefix is 'G'.
-#zstyle ':zim:git' aliases-prefix 'g'
-
-#
-# input
-#
-
-# Append `../` to your input for each `.` you type after an initial `..`
-#zstyle ':zim:input' double-dot-expand yes
-
-#
-# termtitle
-#
-
-# Set a custom terminal title format using prompt expansion escape sequences.
-# See http://zsh.sourceforge.net/Doc/Release/Prompt-Expansion.html#Simple-Prompt-Escapes
-# If none is provided, the default '%n@%m: %~' is used.
-#zstyle ':zim:termtitle' format '%1~'
-
-#
-# zsh-autosuggestions
-#
-
-# Disable automatic widget re-binding on each precmd. This can be set when
-# zsh-users/zsh-autosuggestions is the last module in your ~/.zimrc.
-ZSH_AUTOSUGGEST_MANUAL_REBIND=1
-
-# Customize the style that the suggestions are shown with.
-# See https://github.com/zsh-users/zsh-autosuggestions/blob/master/README.md#suggestion-highlight-style
-#ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=242'
 
 #
 # zsh-syntax-highlighting
@@ -87,10 +31,6 @@ ZSH_AUTOSUGGEST_MANUAL_REBIND=1
 # See https://github.com/zsh-users/zsh-syntax-highlighting/blob/master/docs/highlighters.md
 ZSH_HIGHLIGHT_HIGHLIGHTERS=(main brackets)
 
-# Customize the main highlighter styles.
-# See https://github.com/zsh-users/zsh-syntax-highlighting/blob/master/docs/highlighters/main.md#how-to-tweak-it
-#typeset -A ZSH_HIGHLIGHT_STYLES
-#ZSH_HIGHLIGHT_STYLES[comment]='fg=242'
 
 # ------------------
 # Initialize modules
@@ -114,36 +54,30 @@ fi
 # Initialize modules.
 source ${ZIM_HOME}/init.zsh
 
-# ------------------------------
-# Post-init module configuration
-# ------------------------------
-
-#
-# zsh-history-substring-search
-#
-
-zmodload -F zsh/terminfo +p:terminfo
-# Bind ^[[A/^[[B manually so up/down works both before and after zle-line-init
-for key ('^[[A' '^P' ${terminfo[kcuu1]}) bindkey ${key} history-substring-search-up
-for key ('^[[B' '^N' ${terminfo[kcud1]}) bindkey ${key} history-substring-search-down
-for key ('k') bindkey -M vicmd ${key} history-substring-search-up
-for key ('j') bindkey -M vicmd ${key} history-substring-search-down
-unset key
-# }}} End configuration added by Zim install
-
-
 source "$ZRCDIR/base.zsh"
 source "$ZRCDIR/alias.zsh"
 
-eval "$(/opt/homebrew/bin/brew shellenv)"
+export PATH="$PROTO_HOME/shims:$PROTO_HOME/bin:$PATH"
+export PATH="/opt/homebrew/bin:$PATH"
+export LIBRARY_PATH="/opt/homebrew/lib$LIBRARY_PATH"
+export CPATH="/opt/homebrew/include$CPATH"
+export PATH="$HOME/.gvm/bin:$PATH"
 
-# eval "$(rbenv init -)"
-# export PATH=$HOME/Library/Python/3.8/bin:$PATH
-# [[ -s "/Users/yusukemaruyama/.gvm/scripts/gvm" ]] && source "/Users/yusukemaruyama/.gvm/scripts/gvm"
+export VOLTA_FEATURE_PNPM=1
+# Created by `pipx` on 2024-09-10 04:34:52
+export PATH="$PATH:/Users/takutomori/.local/bin"
+export PATH="/opt/homebrew/opt/mysql@8.0/bin:$PATH"
 
-# Fig post block. Keep at the bottom of this file.
-[[ -f "$HOME/.fig/shell/zshrc.post.zsh" ]] && builtin source "$HOME/.fig/shell/zshrc.post.zsh"
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/Users/takutomori/Downloads/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/takutomori/Downloads/google-cloud-sdk/path.zsh.inc'; fi
 
-# bun completions
-# [ -s "/Users/yusukemaruyama/.bun/_bun" ] && source "/Users/yusukemaruyama/.bun/_bun"
+# The next line enables shell command completion for gcloud.
+if [ -f '/Users/takutomori/Downloads/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/takutomori/Downloads/google-cloud-sdk/completion.zsh.inc'; fi
 
+fpath+=("/opt/homebrew/share/zsh/site-functions")
+PURE_PROMPT_SYMBOL='🐈'
+
+zstyle ':prompt:pure:user' color white
+autoload -U promptinit; promptinit
+prompt pure
+zstyle :prompt:pure:user show yes

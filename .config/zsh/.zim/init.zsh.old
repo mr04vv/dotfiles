@@ -1,0 +1,2 @@
+zimfw() { source /Users/takutomori/.config/zsh/.zim/zimfw.zsh "${@}" }
+zmodule() { source /Users/takutomori/.config/zsh/.zim/zimfw.zsh "${@}" }

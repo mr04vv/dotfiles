@@ -6,7 +6,7 @@ local base_options = {
   clipboard = "unnamedplus", -- Sync clipboard between nvim and system
   swapfile = false,         -- Disable swap file
   history = 500,            -- Number of commandline history memories
-  shell = "fish",
+  shell = "zsh",
 }
 
 local ui_options = {

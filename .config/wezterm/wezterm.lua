@@ -86,6 +86,11 @@ config.keys = {
     mods = 'CMD',
     action = act.ActivatePaneDirection 'Next',
   },
+  {
+    key = 'r',
+    mods = 'CMD',
+    action = act.ResetTerminal,
+  }
 }
 
 -- and finally, return the configuration to wezterm

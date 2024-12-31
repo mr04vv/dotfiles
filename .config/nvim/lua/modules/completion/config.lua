@@ -41,9 +41,7 @@ function config.null_ls()
       null_ls.builtins.formatting.prettier.with({
         prefer_local = "node_modules/.bin",
       }),
-      null_ls.builtins.diagnostics.eslint_d.with({
-        root_dir = require("lspconfig").util.root_pattern(".eslintrc", ".eslintrc.js", ".eslintrc.json"),
-      }),
+      null_ls.builtins.diagnostics.eslint,
     },
     on_attach = function(client, bufnr)
       if client.supports_method("textDocument/formatting") then
