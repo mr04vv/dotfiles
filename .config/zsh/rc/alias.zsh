@@ -9,9 +9,9 @@
 # alias ll='ls -l --color=auto'
 # alias l.='ls -d .[a-zA-Z]* --color=auto'
 
-# # vim
-# alias vi='nvim'
-# alias vim='nvim'
+# vim
+alias vi='nvim'
+alias vim='nvim'
 
-# # lazygit
-# alias lg='lazygit'
+# lazygit
+alias lg='lazygit'

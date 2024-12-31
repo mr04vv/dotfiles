@@ -43,12 +43,6 @@ return {
 		},
 	},
 	{
-		"zbirenbaum/copilot.lua",
-		cmd = "Copilot",
-		event = "InsertEnter",
-		config = conf.copilot,
-	},
-	{
 		"hrsh7th/nvim-cmp",
 		config = conf.nvim_cmp,
 		dependencies = {
@@ -66,4 +60,35 @@ return {
 		},
 	},
 	{ "L3MON4D3/LuaSnip", event = "InsertCharPre", config = conf.lua_snip },
+	{
+		"zbirenbaum/copilot.lua",
+		cmd = "Copilot",
+		config = function()
+		  require("copilot").setup({
+			suggestion = {enabled = false},
+			panel = {enabled = false},
+			copilot_node_command = 'node'
+		  })
+		end,
+	},
+	{
+		"zbirenbaum/copilot-cmp",
+		config = function ()
+		  require("copilot_cmp").setup()
+		end
+	},
+	{
+		"CopilotC-Nvim/CopilotChat.nvim",
+		branch = "main",
+		dependencies = {
+		  { "github/copilot.vim" }, -- or github/copilot.vim
+		  { "nvim-lua/plenary.nvim", branch = "master" }, -- for curl, log wrapper
+		},
+		config = conf.copilot_chat,
+		build = "make tiktoken", -- Only on MacOS or Linux
+		opts = {
+		  -- See Configuration section for rest
+		},
+		-- See Commands section for default commands if you want to lazy load on them
+	},
 }
