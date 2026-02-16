@@ -24,8 +24,8 @@
       };
       mac-intel = {
         system = "x86_64-darwin";
-        username = "takuto";
-        homeDir = "/Users/takuto";
+        username = "mooriii";
+        homeDir = "/Users/mooriii";
       };
     };
 
