@@ -117,14 +117,9 @@
     avrdude           # AVR programmer
 
     # ============================================================================
-    # Embedded Development - ARM
-    # ============================================================================
-    gcc-arm-embedded  # ARM GCC toolchain
-
-    # ============================================================================
     # Embedded Development - QMK/Keyboards
     # ============================================================================
-    qmk               # QMK firmware builder
+    # qmk - Disabled: requires gcc-arm-embedded which is not available on Intel Mac
     dfu-programmer    # USB DFU programmer
     dfu-util          # DFU utilities
     teensy-loader-cli # Teensy loader

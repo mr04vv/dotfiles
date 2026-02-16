@@ -3,7 +3,9 @@
 {
   # M1 Mac specific packages and configuration
   home.packages = with pkgs; [
-    # Add M1-specific packages here if needed
+    # ARM development tools (M1/M2 Mac only)
+    gcc-arm-embedded  # ARM GCC toolchain
+    qmk               # QMK firmware builder (requires gcc-arm-embedded)
   ];
 
   # M1-specific environment variables

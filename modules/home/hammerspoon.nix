@@ -32,6 +32,7 @@
     }
 
     function windowResizeOrPush:getNextScreen(window, cursor)
+      if not window then return nil end
       local nextScreen = nil
       if cursor == 'up' then
         nextScreen = window:screen():toNorth()
@@ -50,6 +51,7 @@
     function windowResizeOrPush:exec(cursor)
       return function()
         local window = hs.window.focusedWindow()
+        if not window then return end
         local nextScreen = self:getNextScreen(window, cursor)
 
         if (window:frame():equals(self.previousRect[cursor]) and nextScreen ~= nil) then
@@ -120,7 +122,10 @@
     hs.hotkey.bind(mash, 'right',  windowResizeOrPush:exec('right'))
     hs.hotkey.bind(mash, 'up',     moveFullscreenToScreen('up'))
     hs.hotkey.bind(mash, 'down',   moveFullscreenToScreen('down'))
-    hs.hotkey.bind(mash, 'return', function() hs.window.focusedWindow():maximize() end)
+    hs.hotkey.bind(mash, 'return', function()
+      local window = hs.window.focusedWindow()
+      if window then window:maximize() end
+    end)
     '';
   };
 }
