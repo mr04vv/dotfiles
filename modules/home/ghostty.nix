@@ -6,6 +6,7 @@
   # Linux config is in hosts/wsl.nix
 
   home.file."Library/Application Support/com.mitchellh.ghostty/config" = lib.mkIf pkgs.stdenv.isDarwin {
+    force = true;
     text = ''
     # Fonts
     font-family = "Jetbrains Mono"
