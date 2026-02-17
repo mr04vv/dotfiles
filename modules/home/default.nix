@@ -9,6 +9,7 @@
     ./ghostty.nix
     ./hammerspoon.nix
     ./claude.nix
+    ./fonts.nix
   ];
 
   # Let Home Manager manage itself
