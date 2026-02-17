@@ -57,7 +57,7 @@
       zstyle ':completion:*:messages' format '%F{purple}-- %d --%f'
       zstyle ':completion:*:warnings' format '%F{red}-- no matches found --%f'
       zstyle ':completion:*' format '%F{yellow}-- %d --%f'
-      zstyle ':completion:*' group-name '''
+      zstyle ':completion:*' group-name ""
       zstyle ':completion:*' verbose yes
 
       # Color completion (with fallback)
@@ -256,5 +256,10 @@
       # Add ~/.local/bin to PATH
       export PATH="$HOME/.local/bin:$PATH"
     '';
+  };
+
+  # Create zsh cache directory
+  home.file.".cache/zsh/.keep" = {
+    text = "";
   };
 }
