@@ -1,11 +1,12 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 {
   # Ghostty terminal configuration
-  # Note: Home Manager's xdg.configFile manages the config file
-  # Ghostty on macOS reads from ~/Library/Application Support/com.mitchellh.ghostty/config
+  # Note: This is macOS-specific config
+  # Linux config is in hosts/wsl.nix
 
-  home.file."Library/Application Support/com.mitchellh.ghostty/config".text = ''
+  home.file."Library/Application Support/com.mitchellh.ghostty/config" = lib.mkIf pkgs.stdenv.isDarwin {
+    text = ''
     # Fonts
     font-family = "Jetbrains Mono"
     font-family = "Noto Sans JP"
@@ -26,5 +27,6 @@
     keybind = "global:shift+cmd+\=toggle_quick_terminal"
     keybind = shift+enter=text:\n
     font-feature = "-dlig"
-  '';
+    '';
+  };
 }
