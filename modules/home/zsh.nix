@@ -7,6 +7,110 @@
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
 
+    # History substring search (similar to Zim)
+    historySubstringSearch.enable = true;
+
+    # Completion settings (based on Zim's completion module)
+    completionInit = ''
+      # Load and initialize the completion system
+      autoload -Uz compinit
+      compinit -C -d "$HOME/.cache/zsh/zcompdump"
+
+      # Compile the completion dumpfile for faster loading
+      if [[ ! "$HOME/.cache/zsh/zcompdump.zwc" -nt "$HOME/.cache/zsh/zcompdump" ]]; then
+        zcompile "$HOME/.cache/zsh/zcompdump"
+      fi
+
+      # ============================================================================
+      # Zsh options
+      # ============================================================================
+
+      # Move cursor to end of word if a full completion is inserted
+      setopt ALWAYS_TO_END
+
+      # Case-insensitive globbing
+      setopt NO_CASE_GLOB
+
+      # Don't beep on ambiguous completions
+      setopt NO_LIST_BEEP
+
+      # ============================================================================
+      # Completion module options
+      # ============================================================================
+
+      # Enable caching
+      zstyle ':completion::complete:*' use-cache on
+      zstyle ':completion:*' cache-path "$HOME/.cache/zsh/zcompcache"
+
+      # Case-insensitive completion with smart matching
+      zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' '+r:|?=**'
+
+      # Menu selection for completion
+      zstyle ':completion:*:*:*:*:*' menu select
+
+      # Group matches and describe
+      zstyle ':completion:*:matches' group yes
+      zstyle ':completion:*:options' description yes
+      zstyle ':completion:*:options' auto-description '%d'
+      zstyle ':completion:*:corrections' format '%F{green}-- %d (errors: %e) --%f'
+      zstyle ':completion:*:descriptions' format '%F{yellow}-- %d --%f'
+      zstyle ':completion:*:messages' format '%F{purple}-- %d --%f'
+      zstyle ':completion:*:warnings' format '%F{red}-- no matches found --%f'
+      zstyle ':completion:*' format '%F{yellow}-- %d --%f'
+      zstyle ':completion:*' group-name '''
+      zstyle ':completion:*' verbose yes
+
+      # Color completion (with fallback)
+      if (( ''${+LS_COLORS} )); then
+        zstyle ':completion:*:default' list-colors ''${(s.:.)LS_COLORS}
+      else
+        zstyle ':completion:*:default' list-colors 'di=1;34:ln=35:so=32:pi=33:ex=31:bd=1;36:cd=1;33:su=30;41:sg=30;46:tw=30;42:ow=30;43'
+      fi
+
+      # Ignore useless commands and functions
+      zstyle ':completion:*:functions' ignored-patterns '(_*|pre(cmd|exec)|prompt_*)'
+
+      # Array completion element sorting
+      zstyle ':completion:*:*:-subscript-:*' tag-order 'indexes' 'parameters'
+
+      # Directories
+      zstyle ':completion:*:*:cd:*:directory-stack' menu yes select
+      zstyle ':completion:*' squeeze-slashes true
+
+      # History
+      zstyle ':completion:*:history-words' stop yes
+      zstyle ':completion:*:history-words' remove-all-dups yes
+      zstyle ':completion:*:history-words' list false
+      zstyle ':completion:*:history-words' menu yes
+
+      # Populate hostname completion
+      zstyle -e ':completion:*:hosts' hosts 'reply=(
+        ''${=''${=''${=''${''${(f)"$(cat {/etc/ssh/ssh_,~/.ssh/}known_hosts{,2} 2>/dev/null)"}%%[#| ]*}//\]:[0-9]*/ }//,/ }//\[/ }
+        ''${=''${(f)"$(cat /etc/hosts 2>/dev/null)"}%%(\#)*}
+        ''${=''${''${''${(@M)''${(f)"$(cat ~/.ssh/config{,.d/*(N)} 2>/dev/null)"}:#Host *}#Host }:#*\**}:#*\?*}}
+      )'
+
+      # Don't complete uninteresting users
+      zstyle ':completion:*:*:*:users' ignored-patterns \
+        '_*' adm amanda apache avahi beaglidx bin cacti canna clamav daemon dbus \
+        distcache dovecot fax ftp games gdm gkrellmd gopher hacluster haldaemon \
+        halt hsqldb ident junkbust ldap lp mail mailman mailnull mldonkey mysql \
+        nagios named netdump news nfsnobody nobody nscd ntp nut nx openvpn \
+        operator pcap postfix postgres privoxy pulse pvm quagga radvd rpc rpcuser \
+        rpm shutdown squid sshd sync uucp vcsa xfs
+
+      # ... unless we really want to
+      zstyle ':completion:*' single-ignored show
+
+      # Ignore multiple entries
+      zstyle ':completion:*:(rm|kill|diff):*' ignore-line other
+      zstyle ':completion:*:rm:*' file-patterns '*:all-files'
+
+      # Man pages
+      zstyle ':completion:*:manuals' separate-sections true
+      zstyle ':completion:*:manuals.(^1*)' insert-sections true
+    '';
+
     # Environment variables
     sessionVariables = {
       EDITOR = "nvim";
@@ -40,6 +144,11 @@
 
     # Pure prompt + existing config
     initContent = ''
+      # ============================================================================
+      # zsh-completions fpath
+      # ============================================================================
+      fpath=(${pkgs.zsh-completions}/share/zsh/site-functions $fpath)
+
       # ============================================================================
       # PATH Configuration
       # ============================================================================
@@ -135,8 +244,9 @@
 
   # Additional packages for zsh
   home.packages = with pkgs; [
-    pure-prompt  # Pure prompt
-    zoxide       # Smarter cd
+    pure-prompt       # Pure prompt
+    zoxide            # Smarter cd
+    zsh-completions   # Additional completion definitions
   ];
 
   # Local zsh configuration that gets sourced
