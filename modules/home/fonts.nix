@@ -8,9 +8,9 @@
 
     # Noto fonts (Japanese + Emoji)
     noto-fonts
-    noto-fonts-cjk-sans  # CJK (Chinese, Japanese, Korean) Sans
-    noto-fonts-cjk-serif # CJK Serif
-    noto-fonts-emoji     # Emoji
+    noto-fonts-cjk-sans   # CJK (Chinese, Japanese, Korean) Sans
+    noto-fonts-cjk-serif  # CJK Serif
+    noto-fonts-color-emoji # Color Emoji
 
     # Optional: Nerd Fonts version of JetBrains Mono (includes icons)
     # (nerdfonts.override { fonts = [ "JetBrainsMono" ]; })
@@ -42,7 +42,7 @@
         fi
       done
 
-      for font_dir in ${pkgs.noto-fonts-emoji}/share/fonts/*; do
+      for font_dir in ${pkgs.noto-fonts-color-emoji}/share/fonts/*; do
         if [ -d "$font_dir" ]; then
           run ln -sf "$font_dir"/* "$HOME/Library/Fonts/" 2>/dev/null || true
         fi
