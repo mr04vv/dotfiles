@@ -154,5 +154,8 @@
   ] ++ (if pkgs.stdenv.isDarwin then [
     # macOS-specific GUI applications available in nixpkgs
     ghostty-bin       # Ghostty terminal emulator
-  ] else []);
+  ] else [
+    # Linux-specific packages
+    ghostty           # Ghostty terminal emulator (Linux)
+  ]);
 }
