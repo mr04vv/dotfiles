@@ -12,6 +12,9 @@
 
     # Completion settings (based on Zim's completion module)
     completionInit = ''
+      # Add zsh-completions to fpath
+      fpath=(${pkgs.zsh-completions}/share/zsh/site-functions $fpath)
+
       # Load and initialize the completion system
       autoload -Uz compinit
       compinit -C -d "$HOME/.cache/zsh/zcompdump"
@@ -83,13 +86,6 @@
       zstyle ':completion:*:history-words' list false
       zstyle ':completion:*:history-words' menu yes
 
-      # Populate hostname completion
-      zstyle -e ':completion:*:hosts' hosts 'reply=(
-        ''${=''${=''${=''${''${(f)"$(cat {/etc/ssh/ssh_,~/.ssh/}known_hosts{,2} 2>/dev/null)"}%%[#| ]*}//\]:[0-9]*/ }//,/ }//\[/ }
-        ''${=''${(f)"$(cat /etc/hosts 2>/dev/null)"}%%(\#)*}
-        ''${=''${''${''${(@M)''${(f)"$(cat ~/.ssh/config{,.d/*(N)} 2>/dev/null)"}:#Host *}#Host }:#*\**}:#*\?*}}
-      )'
-
       # Don't complete uninteresting users
       zstyle ':completion:*:*:*:users' ignored-patterns \
         '_*' adm amanda apache avahi beaglidx bin cacti canna clamav daemon dbus \
@@ -145,9 +141,13 @@
     # Pure prompt + existing config
     initContent = ''
       # ============================================================================
-      # zsh-completions fpath
+      # Hostname completion (simplified from Zim)
       # ============================================================================
-      fpath=(${pkgs.zsh-completions}/share/zsh/site-functions $fpath)
+      # Extract hosts from SSH config and known_hosts
+      if [[ -f ~/.ssh/config ]]; then
+        _ssh_hosts=($(grep -i '^Host ' ~/.ssh/config 2>/dev/null | awk '{print $2}' | grep -v '[*?]'))
+        zstyle ':completion:*:hosts' hosts $_ssh_hosts
+      fi
 
       # ============================================================================
       # PATH Configuration
