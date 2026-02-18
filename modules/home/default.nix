@@ -158,5 +158,8 @@
   ] else [
     # Linux-specific packages
     ghostty           # Ghostty terminal emulator (Linux)
+    libnotify         # Desktop notifications (notify-send)
+    pulseaudio        # Audio system (paplay)
+    alsa-utils        # ALSA utilities (aplay)
   ]);
 }

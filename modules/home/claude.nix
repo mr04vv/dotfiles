@@ -1,5 +1,91 @@
 { config, pkgs, ... }:
 
+let
+  # Platform detection
+  isMacOS = pkgs.stdenv.isDarwin;
+  isLinux = pkgs.stdenv.isLinux;
+
+  # Notification commands (platform-specific)
+  notificationHooks = if isMacOS then [
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier --type banner --title \"許可待ち通知\" --message \"Claudeが許可を求めてるにゃ🐈️\" --messageaction \"/usr/bin/open /Applications/Ghostty.app\"";
+        }
+      ];
+    }
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "/usr/bin/afplay --volume 0.02 ~/.claude/cat-amae.mp3";
+        }
+      ];
+    }
+  ] else [
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "command -v notify-send >/dev/null && notify-send 'Claude - 許可待ち' 'Claudeが許可を求めてるにゃ🐈️' || true";
+        }
+      ];
+    }
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "command -v paplay >/dev/null && paplay --volume 13107 ~/.claude/cat-amae.mp3 || command -v aplay >/dev/null && aplay -q ~/.claude/cat-amae.mp3 || true";
+        }
+      ];
+    }
+  ];
+
+  stopHooks = if isMacOS then [
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier --type banner --title \"完了通知\" --message \"Claudeのタスクが完了したにゃ🐈️\" --messageaction \"/usr/bin/open /Applications/Ghostty.app\"";
+        }
+      ];
+    }
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "/usr/bin/afplay --volume 0.02 ~/.claude/cat.mp3";
+        }
+      ];
+    }
+  ] else [
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "command -v notify-send >/dev/null && notify-send 'Claude - 完了' 'Claudeのタスクが完了したにゃ🐈️' || true";
+        }
+      ];
+    }
+    {
+      matcher = "";
+      hooks = [
+        {
+          type = "command";
+          command = "command -v paplay >/dev/null && paplay --volume 13107 ~/.claude/cat.mp3 || command -v aplay >/dev/null && aplay -q ~/.claude/cat.mp3 || true";
+        }
+      ];
+    }
+  ];
+in
 {
   # Claude Code configuration
   home.file.".claude/settings.json" = {
@@ -112,46 +198,8 @@
           ];
         }
       ];
-      Notification = [
-        {
-          matcher = "";
-          hooks = [
-            {
-              type = "command";
-              command = "/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier --type banner --title \"許可待ち通知\" --message \"Claudeが許可を求めてるにゃ🐈️\" --messageaction \"/usr/bin/open /Applications/Ghostty.app\"";
-            }
-          ];
-        }
-        {
-          matcher = "";
-          hooks = [
-            {
-              type = "command";
-              command = "/usr/bin/afplay --volume 0.02 ~/.claude/cat-amae.mp3";
-            }
-          ];
-        }
-      ];
-      Stop = [
-        {
-          matcher = "";
-          hooks = [
-            {
-              type = "command";
-              command = "/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier --type banner --title \"完了通知\" --message \"Claudeのタスクが完了したにゃ🐈️\" --messageaction \"/usr/bin/open /Applications/Ghostty.app\"";
-            }
-          ];
-        }
-        {
-          matcher = "";
-          hooks = [
-            {
-              type = "command";
-              command = "/usr/bin/afplay --volume 0.02 ~/.claude/cat.mp3";
-            }
-          ];
-        }
-      ];
+      Notification = notificationHooks;
+      Stop = stopHooks;
     };
     statusLine = {
       type = "command";
