@@ -7,6 +7,9 @@
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
 
+    # Emacs keybindings (Ctrl+A, Ctrl+E etc.) - EDITOR=nvim だと vi モードになるため明示的に指定
+    defaultKeymap = "emacs";
+
     # History substring search (similar to Zim)
     historySubstringSearch.enable = true;
 
@@ -105,6 +108,13 @@
       # Man pages
       zstyle ':completion:*:manuals' separate-sections true
       zstyle ':completion:*:manuals.(^1*)' insert-sections true
+    '';
+
+    # Source Nix daemon profile for PATH (needed on non-NixOS systems)
+    envExtra = ''
+      if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+        . '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+      fi
     '';
 
     # Environment variables

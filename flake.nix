@@ -33,8 +33,8 @@
       };
       wsl = {
         system = "x86_64-linux";
-        username = "takutomori";
-        homeDir = "/home/takutomori";
+        username = "mr04v";
+        homeDir = "/home/mr04v";
       };
     };
 
@@ -147,6 +147,30 @@
     darwinConfigurations = builtins.mapAttrs mkDarwin hosts;
     nixosConfigurations = {
       wsl = mkNixos "wsl" hosts.wsl;
+    };
+    homeConfigurations = {
+      wsl =
+        let
+          inherit (hosts.wsl) system username homeDir;
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfree = true;
+            overlays = [ neovim-nightly-overlay.overlays.default ];
+          };
+        in
+        home-manager.lib.homeManagerConfiguration {
+          inherit pkgs;
+          modules = [
+            ./modules/home
+            ./hosts/wsl.nix
+            {
+              home.username = username;
+              home.homeDirectory = homeDir;
+              home.stateVersion = "23.11";
+            }
+          ];
+          extraSpecialArgs = { inherit neovim-nightly-overlay; };
+        };
     };
   };
 }
