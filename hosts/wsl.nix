@@ -38,9 +38,6 @@
         ExitApp
       }
 
-      ; 左Win → 左Ctrl にリマップ
-      LWin::LCtrl
-
       ; 前回のスナップ状態を記録 { hwnd: { dir: "left"|"right"|"up"|"down", monitor: N } }
       prevSnap := Map()
 
@@ -166,14 +163,10 @@
       #HotIf !WinActive("ahk_exe wezterm-gui.exe")
       ^[::Send("{Alt down}{Left}{Alt up}")
       ^]::Send("{Alt down}{Right}{Alt up}")
-      <#[::Send("{Alt down}{Left}{Alt up}")
-      <#]::Send("{Alt down}{Right}{Alt up}")
 
       ; Ctrl+{ / Ctrl+}: タブを前 / 次に切り替え (WezTerm以外)
       ^+[::Send("{Ctrl down}{Shift down}{Tab}{Shift up}{Ctrl up}")
       ^+]::Send("{Ctrl down}{Tab}{Ctrl up}")
-      <#+[::Send("{Ctrl down}{Shift down}{Tab}{Shift up}{Ctrl up}")
-      <#+]::Send("{Ctrl down}{Tab}{Ctrl up}")
       #HotIf
 
       ; Alt+←→: ワード単位で移動
