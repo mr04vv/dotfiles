@@ -251,6 +251,7 @@ in
           bindings = {
             "ctrl+v" = null;
             "ctrl+shift+v" = "chat:imagePaste";
+            "ctrl+i" = "chat:imagePaste";
           };
         }
       ];
