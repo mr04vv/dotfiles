@@ -238,4 +238,21 @@ in
     force = true;
     source = ./claude/CLAUDE.md;
   };
+
+  # Keybindings
+  home.file.".claude/keybindings.json" = {
+    force = true;
+    text = builtins.toJSON {
+      "$schema" = "https://www.schemastore.org/claude-code-keybindings.json";
+      "$docs" = "https://code.claude.com/docs/en/keybindings";
+      bindings = [
+        {
+          context = "Chat";
+          bindings = {
+            "ctrl+shift+v" = "chat:imagePaste";
+          };
+        }
+      ];
+    };
+  };
 }
