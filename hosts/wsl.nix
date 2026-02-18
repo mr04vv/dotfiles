@@ -204,6 +204,27 @@
               prevSnap.Delete(active)
       }
 
+      ; Win+<key> → Ctrl+<key> (一般的な編集・操作ショートカット)
+      #a::Send("{Ctrl down}a{Ctrl up}")
+      #c::Send("{Ctrl down}c{Ctrl up}")
+      #d::Send("{Ctrl down}d{Ctrl up}")
+      #e::Send("{Ctrl down}e{Ctrl up}")
+      #f::Send("{Ctrl down}f{Ctrl up}")
+      #g::Send("{Ctrl down}g{Ctrl up}")
+      #h::Send("{Ctrl down}h{Ctrl up}")
+      #i::Send("{Ctrl down}i{Ctrl up}")
+      #k::Send("{Ctrl down}k{Ctrl up}")
+      #l::Send("{Ctrl down}l{Ctrl up}")
+      #m::Send("{Ctrl down}m{Ctrl up}")
+      #r::Send("{Ctrl down}r{Ctrl up}")
+      #s::Send("{Ctrl down}s{Ctrl up}")
+      #t::Send("{Ctrl down}t{Ctrl up}")
+      #v::Send("{Ctrl down}v{Ctrl up}")
+      #w::Send("{Ctrl down}w{Ctrl up}")
+      #x::Send("{Ctrl down}x{Ctrl up}")
+      #y::Send("{Ctrl down}y{Ctrl up}")
+      #z::Send("{Ctrl down}z{Ctrl up}")
+
       ; ウィンドウが属するモニター番号を取得
       GetMonitorIndex(hwnd) {
         WinGetPos(&wX, &wY, &wW, &wH, hwnd)
