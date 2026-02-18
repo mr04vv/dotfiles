@@ -260,6 +260,10 @@
 
       config.initial_cols = 120
       config.initial_rows = 28
+      config.font = wezterm.font_with_fallback {
+        'JetBrains Mono',
+        'BIZ UDGothic',
+      }
       config.font_size = 10
       config.color_scheme = 'Desert'
       config.default_prog = { "wsl.exe", "--cd", "~" }
@@ -275,6 +279,7 @@
         { key = ']', mods = 'CTRL', action = act.ActivatePaneDirection 'Next' },
         { key = '{', mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
         { key = '}', mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(1) },
+        { key = 'v', mods = 'CTRL', action = act.PasteFrom 'Clipboard' },
       }
 
       return config
