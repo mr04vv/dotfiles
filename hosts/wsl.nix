@@ -150,6 +150,27 @@
       ^!Up::SnapOrMove("up")
       ^!Down::SnapOrMove("down")
 
+      ; Ctrl+Q: アクティブウィンドウを閉じる
+      ^q::WinClose("A")
+
+      ; Ctrl+[ / Ctrl+]: ブラウザバック / フォワード (WezTerm以外)
+      #HotIf !WinActive("ahk_exe wezterm-gui.exe")
+      ^[::Send("{Alt down}{Left}{Alt up}")
+      ^]::Send("{Alt down}{Right}{Alt up}")
+
+      ; Ctrl+{ / Ctrl+}: タブを前 / 次に切り替え (WezTerm以外)
+      ^+[::Send("{Ctrl down}{Shift down}{Tab}{Shift up}{Ctrl up}")
+      ^+]::Send("{Ctrl down}{Tab}{Ctrl up}")
+      #HotIf
+
+      ; Alt+Shift+←→: ワード単位で選択
+      !+Left::Send("{Ctrl down}{Shift down}{Left}{Shift up}{Ctrl up}")
+      !+Right::Send("{Ctrl down}{Shift down}{Right}{Shift up}{Ctrl up}")
+
+      ; Ctrl+Shift+←→: カーソル位置から行頭/行末まで選択
+      ^+Left::Send("{Shift down}{Home}{Shift up}")
+      ^+Right::Send("{Shift down}{End}{Shift up}")
+
       ; Ctrl+Alt+Enter: 今いるモニターで最大化トグル
       ^!Enter:: {
         active := WinGetID("A")
