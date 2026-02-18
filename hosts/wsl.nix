@@ -32,6 +32,12 @@
       #Requires AutoHotkey v2.0
       #SingleInstance Force
 
+      ; 管理者権限で再起動
+      if !A_IsAdmin {
+        Run '*RunAs "' A_ScriptFullPath '"'
+        ExitApp
+      }
+
       ; 前回のスナップ状態を記録 { hwnd: { dir: "left"|"right"|"up"|"down", monitor: N } }
       prevSnap := Map()
 
