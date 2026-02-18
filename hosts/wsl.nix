@@ -25,6 +25,175 @@
     fi
   '';
 
+  # AutoHotkey v2 ウィンドウ管理スクリプト (Hammerspoon相当)
+  home.file.".config/autohotkey/window-manager.ahk" = {
+    force = true;
+    text = ''
+      #Requires AutoHotkey v2.0
+      #SingleInstance Force
+
+      ; 前回のスナップ状態を記録 { hwnd: { dir: "left"|"right"|"up"|"down", monitor: N } }
+      prevSnap := Map()
+
+      ; ウィンドウが最大化状態かを判定
+      IsMaximized(hwnd) {
+        curMon := GetMonitorIndex(hwnd)
+        MonitorGetWorkArea(curMon, &mL, &mT, &mR, &mB)
+        WinGetPos(&wX, &wY, &wW, &wH, hwnd)
+        return (Abs(wX - mL) < 10 && Abs(wY - mT) < 10 && Abs(wW - (mR - mL)) < 10 && Abs(wH - (mB - mT)) < 10)
+              || (WinGetMinMax(hwnd) = 1)
+      }
+
+      ; ウィンドウをスナップ or 隣のモニターに移動
+      SnapOrMove(dir) {
+        active := WinGetID("A")
+        if !active
+          return
+
+        curMon := GetMonitorIndex(active)
+
+        ; 最大化中なら隣のモニターに最大化のまま移動
+        if IsMaximized(active) {
+          nextMon := GetAdjacentMonitor(curMon, dir)
+          if nextMon != curMon {
+            WinRestore(active)
+            MonitorGetWorkArea(nextMon, &mL, &mT, &mR, &mB)
+            WinMove(mL, mT, mR - mL, mB - mT, active)
+            if prevSnap.Has(active)
+              prevSnap.Delete(active)
+            return
+          }
+        }
+
+        ; 前回と同じ方向 & 同じモニターなら隣のモニターに移動
+        if prevSnap.Has(active) && prevSnap[active].dir = dir && prevSnap[active].monitor = curMon {
+          nextMon := GetAdjacentMonitor(curMon, dir)
+          if nextMon != curMon {
+            MoveToMonitorWithSnap(active, nextMon, dir)
+            prevSnap[active] := { dir: dir, monitor: nextMon }
+            return
+          }
+        }
+
+        ; スナップ実行
+        WinRestore(active)
+        MonitorGetWorkArea(curMon, &mL, &mT, &mR, &mB)
+        mW := mR - mL
+        mH := mB - mT
+
+        if (dir = "left")
+          WinMove(mL, mT, mW // 2, mH, active)
+        else if (dir = "right")
+          WinMove(mL + mW // 2, mT, mW // 2, mH, active)
+        else if (dir = "up")
+          WinMove(mL, mT, mW, mH // 2, active)
+        else if (dir = "down")
+          WinMove(mL, mT + mH // 2, mW, mH // 2, active)
+
+        prevSnap[active] := { dir: dir, monitor: curMon }
+      }
+
+      ; 隣のモニターにスナップ状態を維持して移動
+      MoveToMonitorWithSnap(hwnd, targetMon, dir) {
+        MonitorGetWorkArea(targetMon, &mL, &mT, &mR, &mB)
+        mW := mR - mL
+        mH := mB - mT
+
+        if (dir = "left")
+          WinMove(mL, mT, mW // 2, mH, hwnd)
+        else if (dir = "right")
+          WinMove(mL + mW // 2, mT, mW // 2, mH, hwnd)
+        else if (dir = "up")
+          WinMove(mL, mT, mW, mH // 2, hwnd)
+        else if (dir = "down")
+          WinMove(mL, mT + mH // 2, mW, mH // 2, hwnd)
+      }
+
+      ; 指定方向の隣のモニターを取得
+      GetAdjacentMonitor(curMon, dir) {
+        MonitorGetWorkArea(curMon, &cL, &cT, &cR, &cB)
+        cCenterX := (cL + cR) // 2
+        cCenterY := (cT + cB) // 2
+        bestMon := curMon
+        bestDist := 999999
+
+        loop MonitorGetCount() {
+          if A_Index = curMon
+            continue
+          MonitorGetWorkArea(A_Index, &mL, &mT, &mR, &mB)
+          mCenterX := (mL + mR) // 2
+          mCenterY := (mT + mB) // 2
+
+          valid := false
+          if (dir = "left" && mCenterX < cCenterX)
+            valid := true
+          else if (dir = "right" && mCenterX > cCenterX)
+            valid := true
+          else if (dir = "up" && mCenterY < cCenterY)
+            valid := true
+          else if (dir = "down" && mCenterY > cCenterY)
+            valid := true
+
+          if valid {
+            dist := Abs(mCenterX - cCenterX) + Abs(mCenterY - cCenterY)
+            if dist < bestDist {
+              bestDist := dist
+              bestMon := A_Index
+            }
+          }
+        }
+        return bestMon
+      }
+
+      ^!Left::SnapOrMove("left")
+      ^!Right::SnapOrMove("right")
+      ^!Up::SnapOrMove("up")
+      ^!Down::SnapOrMove("down")
+
+      ; Ctrl+Alt+Enter: 今いるモニターで最大化トグル
+      ^!Enter:: {
+        active := WinGetID("A")
+        if !active
+          return
+        minMax := WinGetMinMax(active)
+        if (minMax = 1) {
+          WinRestore(active)
+        } else {
+          ; 現在のモニターのワークエリアに合わせて最大化
+          curMon := GetMonitorIndex(active)
+          MonitorGetWorkArea(curMon, &mL, &mT, &mR, &mB)
+          WinRestore(active)
+          WinMove(mL, mT, mR - mL, mB - mT, active)
+        }
+        if prevSnap.Has(active)
+              prevSnap.Delete(active)
+      }
+
+      ; ウィンドウが属するモニター番号を取得
+      GetMonitorIndex(hwnd) {
+        WinGetPos(&wX, &wY, &wW, &wH, hwnd)
+        centerX := wX + wW // 2
+        centerY := wY + wH // 2
+        loop MonitorGetCount() {
+          MonitorGetWorkArea(A_Index, &l, &t, &r, &b)
+          if (centerX >= l && centerX < r && centerY >= t && centerY < b)
+            return A_Index
+        }
+        return 1
+      }
+    '';
+  };
+
+  # AutoHotkeyスクリプトをWindows側にコピー
+  home.activation.syncAutoHotkeyConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    WIN_HOME="/mnt/c/Users/mr04v"
+    AHK_DIR="$WIN_HOME/Documents/AutoHotkey"
+    if [ -d "$WIN_HOME" ]; then
+      /usr/bin/mkdir -p "$AHK_DIR"
+      /usr/bin/cp -f "$HOME/.config/autohotkey/window-manager.ahk" "$AHK_DIR/window-manager.ahk"
+    fi
+  '';
+
   # WezTerm configuration (Windows側にコピーして使う)
   home.file.".config/wezterm/wezterm.lua" = {
     force = true;
