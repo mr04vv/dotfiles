@@ -169,9 +169,17 @@
       ^+]::Send("{Ctrl down}{Tab}{Ctrl up}")
       #HotIf
 
+      ; Alt+←→: ワード単位で移動
+      !Left::Send("{Ctrl down}{Left}{Ctrl up}")
+      !Right::Send("{Ctrl down}{Right}{Ctrl up}")
+
       ; Alt+Shift+←→: ワード単位で選択
       !+Left::Send("{Ctrl down}{Shift down}{Left}{Shift up}{Ctrl up}")
       !+Right::Send("{Ctrl down}{Shift down}{Right}{Shift up}{Ctrl up}")
+
+      ; Ctrl+←→: 行頭/行末に移動
+      ^Left::Send("{Home}")
+      ^Right::Send("{End}")
 
       ; Ctrl+Shift+←→: カーソル位置から行頭/行末まで選択
       ^+Left::Send("{Shift down}{Home}{Shift up}")
