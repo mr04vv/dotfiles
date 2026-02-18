@@ -38,6 +38,9 @@
         ExitApp
       }
 
+      ; 左Win → 左Ctrl にリマップ
+      LWin::LCtrl
+
       ; 前回のスナップ状態を記録 { hwnd: { dir: "left"|"right"|"up"|"down", monitor: N } }
       prevSnap := Map()
 
@@ -207,9 +210,6 @@
         if prevSnap.Has(active)
               prevSnap.Delete(active)
       }
-
-      ; 左Win → 左Ctrl にリマップ
-      LWin::LCtrl
 
       ; ウィンドウが属するモニター番号を取得
       GetMonitorIndex(hwnd) {
