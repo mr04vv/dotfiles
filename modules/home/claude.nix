@@ -148,7 +148,6 @@ in
         "Read(.env.*)"
         "Read(id_rsa)"
         "Read(id_ed25519)"
-        "Read(**/*token*)"
         "Write(.env*)"
         "Write(**/secrets/**)"
         "Bash(pnpm publish *)"
