@@ -85,6 +85,7 @@
     protoc-gen-go     # Go plugin for protoc
     protoc-gen-go-grpc # gRPC Go plugin
     ghz               # gRPC benchmarking tool
+    grpcurl           # gRPC curl-like tool
 
     # ============================================================================
     # Cloud & Infrastructure
