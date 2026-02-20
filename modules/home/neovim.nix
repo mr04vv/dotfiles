@@ -224,44 +224,43 @@
       keymap("n", "<leader>fe", "<cmd>Telescope file_browser<cr>", opts)
 
       -- Treesitter
-      require("nvim-treesitter.configs").setup({
-        highlight = { enable = true },
-        indent = { enable = true },
-        textobjects = {
-          select = {
-            enable = true,
-            lookahead = true,
-            keymaps = {
-              ["af"] = "@function.outer",
-              ["if"] = "@function.inner",
-              ["ac"] = "@class.outer",
-              ["ic"] = "@class.inner",
-            },
+      require("nvim-treesitter").setup()
+      vim.treesitter.language.register("markdown", "mdx")
+
+      require("nvim-treesitter-textobjects").setup({
+        select = {
+          enable = true,
+          lookahead = true,
+          keymaps = {
+            ["af"] = "@function.outer",
+            ["if"] = "@function.inner",
+            ["ac"] = "@class.outer",
+            ["ic"] = "@class.inner",
           },
         },
       })
 
       -- LSP Configuration
-      local lspconfig = require("lspconfig")
       local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
-      -- Common on_attach function
-      local on_attach = function(client, bufnr)
-        local bufopts = { noremap = true, silent = true, buffer = bufnr }
-        keymap("n", "gD", vim.lsp.buf.declaration, bufopts)
-        keymap("n", "gd", vim.lsp.buf.definition, bufopts)
-        keymap("n", "K", vim.lsp.buf.hover, bufopts)
-        keymap("n", "gi", vim.lsp.buf.implementation, bufopts)
-        keymap("n", "<C-k>", vim.lsp.buf.signature_help, bufopts)
-        keymap("n", "<leader>rn", vim.lsp.buf.rename, bufopts)
-        keymap("n", "<leader>ca", vim.lsp.buf.code_action, bufopts)
-        keymap("n", "gr", vim.lsp.buf.references, bufopts)
-        keymap("n", "<leader>f", function() vim.lsp.buf.format({ async = true }) end, bufopts)
-      end
+      -- Keymaps on LSP attach
+      vim.api.nvim_create_autocmd("LspAttach", {
+        callback = function(ev)
+          local bufopts = { noremap = true, silent = true, buffer = ev.buf }
+          keymap("n", "gD", vim.lsp.buf.declaration, bufopts)
+          keymap("n", "gd", vim.lsp.buf.definition, bufopts)
+          keymap("n", "K", vim.lsp.buf.hover, bufopts)
+          keymap("n", "gi", vim.lsp.buf.implementation, bufopts)
+          keymap("n", "<C-k>", vim.lsp.buf.signature_help, bufopts)
+          keymap("n", "<leader>rn", vim.lsp.buf.rename, bufopts)
+          keymap("n", "<leader>ca", vim.lsp.buf.code_action, bufopts)
+          keymap("n", "gr", vim.lsp.buf.references, bufopts)
+          keymap("n", "<leader>f", function() vim.lsp.buf.format({ async = true }) end, bufopts)
+        end,
+      })
 
       -- LSP servers
-      lspconfig.lua_ls.setup({
-        on_attach = on_attach,
+      vim.lsp.config("lua_ls", {
         capabilities = capabilities,
         settings = {
           Lua = {
@@ -272,10 +271,11 @@
         },
       })
 
-      lspconfig.nil_ls.setup({
-        on_attach = on_attach,
+      vim.lsp.config("nil_ls", {
         capabilities = capabilities,
       })
+
+      vim.lsp.enable({ "lua_ls", "nil_ls" })
 
       -- nvim-cmp
       local cmp = require("cmp")
