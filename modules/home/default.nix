@@ -84,6 +84,7 @@
     protobuf          # Protocol buffers
     protoc-gen-go     # Go plugin for protoc
     protoc-gen-go-grpc # gRPC Go plugin
+    grpcurl           # gRPC curl-like tool
     ghz               # gRPC benchmarking tool
 
     # ============================================================================
