@@ -16,9 +16,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
+    arto.url = "github:arto-app/Arto";
   };
 
-  outputs = { self, nixpkgs, nix-darwin, home-manager, nixos-wsl, neovim-nightly-overlay, ... }:
+  outputs = { self, nixpkgs, nix-darwin, home-manager, nixos-wsl, neovim-nightly-overlay, arto, ... }:
   let
     hosts = {
       mac-m1 = {
@@ -67,7 +68,7 @@
               ];
               home.stateVersion = "23.11";
             };
-            home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay; };
+            home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay arto; };
           }
 
           # nix-darwin modules

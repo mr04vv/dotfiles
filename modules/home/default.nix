@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, pkgs, arto, ... }:
 
 {
   imports = [
@@ -86,6 +86,7 @@
     protoc-gen-go-grpc # gRPC Go plugin
     grpcurl           # gRPC curl-like tool
     ghz               # gRPC benchmarking tool
+    grpcurl           # gRPC curl-like tool
 
     # ============================================================================
     # Cloud & Infrastructure
@@ -156,6 +157,8 @@
   ] ++ (if pkgs.stdenv.isDarwin then [
     # macOS-specific GUI applications available in nixpkgs
     ghostty-bin       # Ghostty terminal emulator
+    shottr            # Screenshot app with OCR and annotation
+    arto.packages.${pkgs.system}.default  # Arto note-taking app
   ] else [
     # Linux-specific packages
     ghostty           # Ghostty terminal emulator (Linux)
