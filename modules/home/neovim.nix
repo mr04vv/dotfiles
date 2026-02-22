@@ -1,5 +1,17 @@
 { config, pkgs, neovim-nightly-overlay, ... }:
 
+let
+  arto-vim = pkgs.vimUtils.buildVimPlugin {
+    name = "arto-vim";
+    src = pkgs.fetchFromGitHub {
+      owner = "arto-app";
+      repo = "arto.vim";
+      rev = "b05936238ff835ceca43442bf4ab8e843e73815c";
+      hash = "sha256-/Rk/t7Hm/VTa1KQptzd+1sZIiRR2l++tA98DSe9uwV4=";
+    };
+  };
+in
+
 {
   programs.neovim = {
     enable = true;
@@ -61,6 +73,9 @@
 
       # Other
       vim-wakatime
+
+      # Arto
+      arto-vim
     ];
 
     # LSP servers and other tools
@@ -225,6 +240,7 @@
 
       -- Treesitter
       require("nvim-treesitter").setup()
+      vim.treesitter.language.register("markdown", "mdx")
 
       -- Enable treesitter-based highlighting and indentation
       vim.api.nvim_create_autocmd("FileType", {
@@ -256,22 +272,7 @@
         capabilities = require("cmp_nvim_lsp").default_capabilities(),
       })
 
-      -- lua_ls
-      vim.lsp.config('lua_ls', {
-        settings = {
-          Lua = {
-            diagnostics = {
-              globals = { "vim" },
-            },
-          },
-        },
-      })
-      vim.lsp.enable('lua_ls')
-
-      -- nil_ls (Nix LSP)
-      vim.lsp.enable('nil_ls')
-
-      -- Keymaps on LSP attach (replaces on_attach)
+      -- Keymaps on LSP attach
       vim.api.nvim_create_autocmd("LspAttach", {
         callback = function(args)
           local bufopts = { noremap = true, silent = true, buffer = args.buf }
@@ -286,6 +287,19 @@
           keymap("n", "<leader>f", function() vim.lsp.buf.format({ async = true }) end, bufopts)
         end,
       })
+
+      -- lua_ls
+      vim.lsp.config('lua_ls', {
+        settings = {
+          Lua = {
+            diagnostics = {
+              globals = { "vim" },
+            },
+          },
+        },
+      })
+
+      vim.lsp.enable({ "lua_ls", "nil_ls" })
 
       -- nvim-cmp
       local cmp = require("cmp")

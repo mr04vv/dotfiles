@@ -1,5 +1,39 @@
 {
   "nodes": {
+    "arto": {
+      "inputs": {
+        "crane": "crane",
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1771737817,
+        "narHash": "sha256-7gfGOYbBDGJazabaXytL5P6ZWpHwrz7BYd3mG8adb6I=",
+        "owner": "arto-app",
+        "repo": "Arto",
+        "rev": "9bb1d5c44564c746d8e3c1b57ec07da35b0fb4a7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "arto-app",
+        "repo": "Arto",
+        "type": "github"
+      }
+    },
+    "crane": {
+      "locked": {
+        "lastModified": 1770419512,
+        "narHash": "sha256-o8Vcdz6B6bkiGUYkZqFwH3Pv1JwZyXht3dMtS7RchIo=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "2510f2cbc3ccd237f700bb213756a8f35c32d8d7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -61,7 +95,7 @@
       "inputs": {
         "flake-parts": "flake-parts",
         "neovim-src": "neovim-src",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs_2"
       },
       "locked": {
         "lastModified": 1771200309,
@@ -136,6 +170,22 @@
     },
     "nixpkgs": {
       "locked": {
+        "lastModified": 1770169770,
+        "narHash": "sha256-awR8qIwJxJJiOmcEGgP2KUqYmHG4v/z8XpL9z8FnT1A=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "aa290c9891fa4ebe88f8889e59633d20cc06a5f2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
         "lastModified": 1771147098,
         "narHash": "sha256-jpfPdBjKO232s5NueoNEvvVzpndiUzPLNYcH4/Ov0gY=",
         "owner": "NixOS",
@@ -150,7 +200,7 @@
         "type": "github"
       }
     },
-    "nixpkgs_2": {
+    "nixpkgs_3": {
       "locked": {
         "lastModified": 1771177547,
         "narHash": "sha256-trTtk3WTOHz7hSw89xIIvahkgoFJYQ0G43IlqprFoMA=",
@@ -168,11 +218,12 @@
     },
     "root": {
       "inputs": {
+        "arto": "arto",
         "home-manager": "home-manager",
         "neovim-nightly-overlay": "neovim-nightly-overlay",
         "nix-darwin": "nix-darwin",
         "nixos-wsl": "nixos-wsl",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_3"
       }
     }
   },
