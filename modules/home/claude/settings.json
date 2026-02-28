@@ -106,8 +106,7 @@
       "Bash(gh run view:*)",
       "Bash(git log:*)",
       "Bash(git show:*)",
-      "Bash(tmux *)",
-      "Bash(echo *)"
+      "Bash(tmux *)"
     ],
     "ask": [
       "Bash(pnpm add:*)",
