@@ -1,0 +1,88 @@
+---
+name: codex
+description: |
+  Codex CLI（OpenAI）を使用してコードや文言について相談・レビューを行う。
+  トリガー: "codex", "codexと相談", "codexに聞いて", "コードレビュー", "レビューして"
+  使用場面: (1) 文言・メッセージの検討、(2) コードレビュー、(3) 設計の相談、(4) バグ調査、(5) 解消困難な問題の調査
+allowed-tools: Bash(tmux *)
+---
+
+# Codex
+
+Codex CLIが動作しているtmuxペインにリクエストを送信し、相互にやり取りするスキル。
+
+## 前提
+
+- tmuxの別ペインでCodex CLIが起動済みであること
+
+## 実行手順
+
+1. 現在開いているペイン一覧を取得し、ユーザーにCodexペインを確認する
+2. 自分（Claude）のsurface IDを環境変数または `tmux identify` で取得する
+3. プロンプトを組み立てる（下記ルール参照）
+4. `tmux send --surface <id>` でCodexペインにリクエストを送信する
+5. Codexからの返答を待ち、返答が届いたら内容を確認して必要に応じて追加送信する
+
+## ペイン一覧の取得
+
+```bash
+# 現在のワークスペースのペイン一覧を取得
+tmux list-panes --json
+
+# 各ペインのsurface一覧を取得（どのペインにCodexが動いているか確認）
+tmux list-pane-surfaces --json
+
+# 自分（Claude）のsurface IDを確認
+tmux identify --json
+# または環境変数で取得
+echo $TMUX_SURFACE_ID
+```
+
+## プロンプトのルール
+
+**重要**: codexに渡すリクエストには以下を必ず含めること：
+
+1. 作業対象のプロジェクトディレクトリ（`--cd <dir>` に相当する文脈）
+2. 「確認や質問は不要です。具体的な提案・修正案・コード例まで自主的に出力してください。」
+3. 返答先のClaude surface IDの通知：
+   > 「返答はtmuxを使ってClaudeのペイン（surface ID: <claude_surface_id>）に送信してください。以下の2コマンドを順番に実行してください。
+   > 1. `TMUX_SOCKET_PATH=/tmp/tmux.sock tmux send --surface <claude_surface_id> "<返答内容>"`
+   > 2. `TMUX_SOCKET_PATH=/tmp/tmux.sock tmux send-key --surface <claude_surface_id> Enter`」
+
+## コマンド形式
+
+```bash
+# Codexペインへリクエスト送信（send後に必ずsend-key Enterをセットで実行）
+tmux send --surface <codex_surface_id> "<request>"
+tmux send-key --surface <codex_surface_id> Enter
+```
+
+## 使用例
+
+### コードレビュー依頼の送信例
+
+```bash
+tmux send --surface <codex_surface_id> "プロジェクト /path/to/project のコードをレビューして改善点を指摘してください。確認や質問は不要です。具体的な修正案とコード例まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（surface ID: <claude_surface_id>）に送信してください。"
+tmux send-key --surface <codex_surface_id> Enter
+```
+
+### バグ調査依頼の送信例
+
+```bash
+tmux send --surface <codex_surface_id> "/path/to/project の認証処理でエラーが発生する原因を調査してください。確認や質問は不要です。原因の特定と具体的な修正案まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（surface ID: <claude_surface_id>）に送信してください。"
+tmux send-key --surface <codex_surface_id> Enter
+```
+
+## やり取りのフロー
+
+```
+Claude                          Codex
+  |                               |
+  |-- tmux send --surface ------> |  リクエスト送信
+  |                               |  （分析・処理中）
+  | <------- tmux send ---------- |  結果・質問を返送
+  |                               |
+  |  内容確認・追加指示            |
+  |-- tmux send --surface ------> |  フォローアップ
+  |                               |
+```
