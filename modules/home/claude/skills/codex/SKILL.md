@@ -47,10 +47,11 @@ tmux display-message -p "#{pane_id}"
 
 ```bash
 # Codexペインへリクエスト送信
+# 重要: テキスト送信後、Codexが入力を受け取るまで少し待ってからEnterを送ること
 # 重要: "Enter" はキー名として tmux に渡す引数であり、文字列に含めてはいけない
-# 正しい例: tmux send-keys -t %1 "hello" Enter
+# 正しい例: tmux send-keys -t %1 "hello" && sleep 1 && tmux send-keys -t %1 "" Enter
 # 誤った例: tmux send-keys -t %1 "hello Enter"
-tmux send-keys -t <codex_pane_id> "<request>" Enter
+tmux send-keys -t <codex_pane_id> "<request>" && sleep 1 && tmux send-keys -t <codex_pane_id> "" Enter
 ```
 
 ## 使用例
@@ -58,13 +59,13 @@ tmux send-keys -t <codex_pane_id> "<request>" Enter
 ### コードレビュー依頼の送信例
 
 ```bash
-tmux send-keys -t <codex_pane_id> "プロジェクト /path/to/project のコードをレビューして改善点を指摘してください。確認や質問は不要です。具体的な修正案とコード例まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。" Enter
+tmux send-keys -t <codex_pane_id> "プロジェクト /path/to/project のコードをレビューして改善点を指摘してください。確認や質問は不要です。具体的な修正案とコード例まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。" && sleep 1 && tmux send-keys -t <codex_pane_id> "" Enter
 ```
 
 ### バグ調査依頼の送信例
 
 ```bash
-tmux send-keys -t <codex_pane_id> "/path/to/project の認証処理でエラーが発生する原因を調査してください。確認や質問は不要です。原因の特定と具体的な修正案まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。" Enter
+tmux send-keys -t <codex_pane_id> "/path/to/project の認証処理でエラーが発生する原因を調査してください。確認や質問は不要です。原因の特定と具体的な修正案まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。" && sleep 1 && tmux send-keys -t <codex_pane_id> "" Enter
 ```
 
 ## やり取りのフロー
