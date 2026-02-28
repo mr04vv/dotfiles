@@ -48,14 +48,15 @@ tmux display-message -p "#{pane_id}"
 
 ## コマンド形式
 
-```bash
+以下を **1回のBash呼び出し** で実行すること。2回に分けてはいけない：
+
+```
 tmux send-keys -t <codex_pane_id> "<request>" && sleep 1 && tmux send-keys -t <codex_pane_id> "" Enter
 ```
 
 **重要**:
-- `&&` はシェルの演算子であり、コマンド文字列の一部ではない。引数としてクォートしてはいけない
-- 正しい例: `tmux send-keys -t %1 "hello" && sleep 1 && tmux send-keys -t %1 "" Enter`
-- 誤った例: `tmux send-keys -t %1 "hello" '&&' sleep 1 '&&' tmux send-keys -t %1 '' Enter`
+- 上記を1つのBashコマンドとして実行すること。`tmux send-keys` と `sleep 1 && tmux send-keys` に分割してはいけない
+- `&&` はシェルの演算子。引数としてクォートしてはいけない
 - `Enter` はキー名であり文字列に含めてはいけない
 
 ## 使用例
