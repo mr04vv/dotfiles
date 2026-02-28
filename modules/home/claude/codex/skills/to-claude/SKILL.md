@@ -30,9 +30,10 @@ tmux send-keys -t <claude_pane_id> "<response>" && sleep 1 && tmux send-keys -t 
 ```
 
 **重要**:
-- `&&` はシェルの演算子であり、コマンド文字列の一部ではない。引数としてクォートしてはいけない
+- 上記を1つのBashコマンドとして実行すること。`tmux send-keys` と `sleep 1 && tmux send-keys` に分割してはいけない
+- `&&` はシェルの演算子。引数としてクォートしてはいけない
 - 正しい例: `tmux send-keys -t %1 "hello" && sleep 1 && tmux send-keys -t %1 "" Enter`
-- 誤った例: `tmux send-keys -t %1 "hello" '&&' sleep 1 '&&' tmux send-keys -t %1 '' Enter`
+- 誤った例（分割）: 1回目 `tmux send-keys -t %1 "hello"` / 2回目 `sleep 1 && tmux send-keys -t %1 "" Enter`
 
 ## 実行手順
 
