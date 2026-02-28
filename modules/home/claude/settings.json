@@ -106,10 +106,9 @@
       "Bash(gh run view:*)",
       "Bash(git log:*)",
       "Bash(git show:*)",
-      "Bash(cmux *)"
+      "Bash(tmux *)"
     ],
     "ask": [
-      "Read(**/Atrae/**/.*)","Edit(**/Atrae/**/.*)","Bash(ni:*)",
       "Bash(pnpm add:*)",
       "Bash(yarn add:*)",
       "Bash(npm i:*)",
