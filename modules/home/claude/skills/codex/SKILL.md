@@ -40,8 +40,10 @@ tmux display-message -p "#{pane_id}"
 1. 作業対象のプロジェクトディレクトリ（`--cd <dir>` に相当する文脈）
 2. 「確認や質問は不要です。具体的な提案・修正案・コード例まで自主的に出力してください。」
 3. 返答先のClaudeペインIDの通知：
-   > 「返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。以下の2コマンドを順番に実行してください。
-   > `tmux send-keys -t <claude_pane_id> "<返答内容>" Enter`」
+   > 「返答はto-claudeスキルを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。
+   > テキストとして出力するのではなく、必ずシェルで以下の2コマンドを順番に実行してください。
+   > 1. `tmux send-keys -t <claude_pane_id> "<返答内容>"`
+   > 2. `sleep 1 && tmux send-keys -t <claude_pane_id> "" Enter`」
 
 ## コマンド形式
 

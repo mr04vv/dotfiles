@@ -15,21 +15,36 @@ description: |
 - tmuxが起動していること
 - ClaudeのペインIDが既知であること（リクエスト受信時に通知される）
 
+## 重要: このスキルはシェルコマンドを実行するスキルです
+
+返答をテキストとして出力するのではなく、**必ずシェルで以下のコマンドを実行**すること。
+コマンドを出力するだけでは動作しない。`shell` または `bash` ツールで実際に実行すること。
+
 ## 実行コマンド
 
+以下を **シェルで実行** する（出力するだけでは不可）：
+
 ```bash
-# Claudeペインに結果を送信
-# 重要: テキスト送信後、少し待ってからEnterを送ること
-# 重要: "Enter" はキー名として tmux に渡す引数であり、文字列に含めてはいけない
-tmux send-keys -t <claude_pane_id> "<response>" && sleep 1 && tmux send-keys -t <claude_pane_id> "" Enter
+tmux send-keys -t <claude_pane_id> "<response>"
 ```
+
+```bash
+sleep 1
+```
+
+```bash
+tmux send-keys -t <claude_pane_id> "" Enter
+```
+
+**重要**: 各コマンドは独立したシェル呼び出しで実行すること。`&&` でつないだり、複数の引数に分けてはいけない。
 
 ## 実行手順
 
 1. Claudeから受け取ったリクエストの中からClaudeのpane IDを確認する
 2. 分析・調査を実施する
-3. 結果をまとめて `tmux send-keys -t <claude_pane_id>` でClaudeのペインに送信する
-4. 追加の質問や指示があれば同様に返送する
+3. 返答テキストを組み立てる（冒頭に `[Codex]` プレフィックスをつける）
+4. **シェルで** `tmux send-keys` コマンドを実行して送信する
+5. 追加の質問や指示があれば同様に返送する
 
 ## メッセージのルール
 
@@ -39,12 +54,16 @@ tmux send-keys -t <claude_pane_id> "<response>" && sleep 1 && tmux send-keys -t 
 
 ## 使用例
 
-```bash
-# コードレビュー結果を返送
-tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..." && sleep 1 && tmux send-keys -t %1 "" Enter
+以下を **シェルで実行** する：
 
-# 追加情報を求める場合
-tmux send-keys -t %1 "[Codex] 調査完了。エラーの原因は特定できましたが、スタックトレースの全文を共有してもらえますか？" && sleep 1 && tmux send-keys -t %1 "" Enter
+```bash
+tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..."
+```
+```bash
+sleep 1
+```
+```bash
+tmux send-keys -t %1 "" Enter
 ```
 
 ## やり取りのフロー
@@ -54,7 +73,7 @@ Codex                           Claude
   |                               |
   |  （Claudeからリクエスト受信）  |
   |  分析・処理中                 |
-  |-- tmux send-keys -t --------> |  結果を返送
+  |-- tmux send-keys (実行) ----> |  結果を返送
   |                               |  内容確認・追加指示
   | <------- tmux send-keys ----- |  フォローアップ受信
   |                               |
