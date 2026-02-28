@@ -41,15 +41,13 @@ tmux display-message -p "#{pane_id}"
 2. 「確認や質問は不要です。具体的な提案・修正案・コード例まで自主的に出力してください。」
 3. 返答先のClaudeペインIDの通知：
    > 「返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。以下の2コマンドを順番に実行してください。
-   > 1. `tmux send-keys -t <claude_pane_id> "<返答内容>"`
-   > 2. `tmux send-keys -t <claude_pane_id> "" Enter`」
+   > `tmux send-keys -t <claude_pane_id> "<返答内容>" Enter`」
 
 ## コマンド形式
 
 ```bash
-# Codexペインへリクエスト送信（send-keys後に必ずEnterをセットで実行）
-tmux send-keys -t <codex_pane_id> "<request>"
-tmux send-keys -t <codex_pane_id> "" Enter
+# Codexペインへリクエスト送信
+tmux send-keys -t <codex_pane_id> "<request>" Enter
 ```
 
 ## 使用例
@@ -57,15 +55,13 @@ tmux send-keys -t <codex_pane_id> "" Enter
 ### コードレビュー依頼の送信例
 
 ```bash
-tmux send-keys -t <codex_pane_id> "プロジェクト /path/to/project のコードをレビューして改善点を指摘してください。確認や質問は不要です。具体的な修正案とコード例まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。"
-tmux send-keys -t <codex_pane_id> "" Enter
+tmux send-keys -t <codex_pane_id> "プロジェクト /path/to/project のコードをレビューして改善点を指摘してください。確認や質問は不要です。具体的な修正案とコード例まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。" Enter
 ```
 
 ### バグ調査依頼の送信例
 
 ```bash
-tmux send-keys -t <codex_pane_id> "/path/to/project の認証処理でエラーが発生する原因を調査してください。確認や質問は不要です。原因の特定と具体的な修正案まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。"
-tmux send-keys -t <codex_pane_id> "" Enter
+tmux send-keys -t <codex_pane_id> "/path/to/project の認証処理でエラーが発生する原因を調査してください。確認や質問は不要です。原因の特定と具体的な修正案まで自主的に出力してください。返答はtmuxを使ってClaudeのペイン（pane ID: <claude_pane_id>）に送信してください。" Enter
 ```
 
 ## やり取りのフロー
