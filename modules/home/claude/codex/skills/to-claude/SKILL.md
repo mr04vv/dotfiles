@@ -19,10 +19,9 @@ description: |
 
 ```bash
 # Claudeペインに結果を送信
+# 重要: テキスト送信後、少し待ってからEnterを送ること
 # 重要: "Enter" はキー名として tmux に渡す引数であり、文字列に含めてはいけない
-# 正しい例: tmux send-keys -t %1 "hello" Enter
-# 誤った例: tmux send-keys -t %1 "hello Enter"
-tmux send-keys -t <claude_pane_id> "<response>" Enter
+tmux send-keys -t <claude_pane_id> "<response>" && sleep 1 && tmux send-keys -t <claude_pane_id> "" Enter
 ```
 
 ## 実行手順
@@ -42,10 +41,10 @@ tmux send-keys -t <claude_pane_id> "<response>" Enter
 
 ```bash
 # コードレビュー結果を返送
-tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..." Enter
+tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..." && sleep 1 && tmux send-keys -t %1 "" Enter
 
 # 追加情報を求める場合
-tmux send-keys -t %1 "[Codex] 調査完了。エラーの原因は特定できましたが、スタックトレースの全文を共有してもらえますか？" Enter
+tmux send-keys -t %1 "[Codex] 調査完了。エラーの原因は特定できましたが、スタックトレースの全文を共有してもらえますか？" && sleep 1 && tmux send-keys -t %1 "" Enter
 ```
 
 ## やり取りのフロー
