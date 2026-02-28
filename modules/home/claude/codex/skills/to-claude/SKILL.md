@@ -19,6 +19,9 @@ description: |
 
 ```bash
 # Claudeペインに結果を送信
+# 重要: "Enter" はキー名として tmux に渡す引数であり、文字列に含めてはいけない
+# 正しい例: tmux send-keys -t %1 "hello" Enter
+# 誤った例: tmux send-keys -t %1 "hello Enter"
 tmux send-keys -t <claude_pane_id> "<response>" Enter
 ```
 
