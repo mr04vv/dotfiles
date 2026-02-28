@@ -40,6 +40,7 @@
     # ============================================================================
     git
     gh                # GitHub CLI
+    github-copilot-cli # GitHub Copilot CLI
     ghq               # repository management
     lazygit           # TUI for git
 
@@ -148,6 +149,7 @@
     adr-tools         # Architecture Decision Records
     nginx             # Web server
     golangci-lint     # Go linter
+    chezmoi           # Dotfiles manager
 
     # ============================================================================
     # GUI Applications (macOS)

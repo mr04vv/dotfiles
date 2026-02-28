@@ -1,0 +1,23 @@
+model = "gpt-5.2"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "low"
+[projects."/Users/takutomori/Works/Atrae/wevox-mono-web"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/develop/workspace/projects/blog"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/Atrae/atrae-ui"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/Atrae/wevox-rest-bff"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/dotfiles"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/Atrae/wevox-front"]
+trust_level = "trusted"
