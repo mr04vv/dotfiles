@@ -23,28 +23,23 @@ description: |
 
 ## 実行コマンド
 
-以下を **シェルで実行** する（出力するだけでは不可）：
+以下を **1つのシェル呼び出しで実行** する：
 
 ```bash
-tmux send-keys -t <claude_pane_id> "<response>"
+tmux send-keys -t <claude_pane_id> "<response>" && sleep 1 && tmux send-keys -t <claude_pane_id> "" Enter
 ```
 
-```bash
-sleep 1
-```
-
-```bash
-tmux send-keys -t <claude_pane_id> "" Enter
-```
-
-**重要**: 各コマンドは独立したシェル呼び出しで実行すること。`&&` でつないだり、複数の引数に分けてはいけない。
+**重要**:
+- `&&` はシェルの演算子であり、コマンド文字列の一部ではない。引数としてクォートしてはいけない
+- 正しい例: `tmux send-keys -t %1 "hello" && sleep 1 && tmux send-keys -t %1 "" Enter`
+- 誤った例: `tmux send-keys -t %1 "hello" '&&' sleep 1 '&&' tmux send-keys -t %1 '' Enter`
 
 ## 実行手順
 
 1. Claudeから受け取ったリクエストの中からClaudeのpane IDを確認する
 2. 分析・調査を実施する
 3. 返答テキストを組み立てる（冒頭に `[Codex]` プレフィックスをつける）
-4. **シェルで** `tmux send-keys` コマンドを実行して送信する
+4. **シェルで** 上記コマンドを1回実行して送信する
 5. 追加の質問や指示があれば同様に返送する
 
 ## メッセージのルール
@@ -55,16 +50,8 @@ tmux send-keys -t <claude_pane_id> "" Enter
 
 ## 使用例
 
-以下を **シェルで実行** する：
-
 ```bash
-tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..."
-```
-```bash
-sleep 1
-```
-```bash
-tmux send-keys -t %1 "" Enter
+tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..." && sleep 1 && tmux send-keys -t %1 "" Enter
 ```
 
 ## やり取りのフロー

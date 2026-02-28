@@ -49,13 +49,14 @@ tmux display-message -p "#{pane_id}"
 ## コマンド形式
 
 ```bash
-# Codexペインへリクエスト送信
-# 重要: テキスト送信後、Codexが入力を受け取るまで少し待ってからEnterを送ること
-# 重要: "Enter" はキー名として tmux に渡す引数であり、文字列に含めてはいけない
-# 正しい例: tmux send-keys -t %1 "hello" && sleep 1 && tmux send-keys -t %1 "" Enter
-# 誤った例: tmux send-keys -t %1 "hello Enter"
 tmux send-keys -t <codex_pane_id> "<request>" && sleep 1 && tmux send-keys -t <codex_pane_id> "" Enter
 ```
+
+**重要**:
+- `&&` はシェルの演算子であり、コマンド文字列の一部ではない。引数としてクォートしてはいけない
+- 正しい例: `tmux send-keys -t %1 "hello" && sleep 1 && tmux send-keys -t %1 "" Enter`
+- 誤った例: `tmux send-keys -t %1 "hello" '&&' sleep 1 '&&' tmux send-keys -t %1 '' Enter`
+- `Enter` はキー名であり文字列に含めてはいけない
 
 ## 使用例
 
