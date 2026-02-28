@@ -122,8 +122,6 @@
       "Bash(rm -rf:*)",
       "Bash(git config:*)",
       "Bash(git reset:*)",
-      "Bash(sleep *)",
-      "Bash(tmux capture-pane*)",
 "Bash(chmod 777:*)",
       "Bash(gh repo delete:*)",
       "Read(.env.*)",
