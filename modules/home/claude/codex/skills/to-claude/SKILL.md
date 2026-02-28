@@ -19,8 +19,7 @@ description: |
 
 ```bash
 # Claudeペインに結果を送信
-tmux send-keys -t <claude_pane_id> "<response>"
-tmux send-keys -t <claude_pane_id> "" Enter
+tmux send-keys -t <claude_pane_id> "<response>" Enter
 ```
 
 ## 実行手順
@@ -40,12 +39,10 @@ tmux send-keys -t <claude_pane_id> "" Enter
 
 ```bash
 # コードレビュー結果を返送
-tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..."
-tmux send-keys -t %1 "" Enter
+tmux send-keys -t %1 "[Codex] レビュー結果: 認証処理に問題があります。具体的には..." Enter
 
 # 追加情報を求める場合
-tmux send-keys -t %1 "[Codex] 調査完了。エラーの原因は特定できましたが、スタックトレースの全文を共有してもらえますか？"
-tmux send-keys -t %1 "" Enter
+tmux send-keys -t %1 "[Codex] 調査完了。エラーの原因は特定できましたが、スタックトレースの全文を共有してもらえますか？" Enter
 ```
 
 ## やり取りのフロー
