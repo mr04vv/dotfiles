@@ -1996,21 +1996,20 @@ def format_output_full(ctx, terminal_width=None):
                         if get_display_width(line1) <= terminal_width:
                             lines.append(line1)
                         else:
-                            # Step 5: ブランチ名をさらに短縮（ディレクトリパスは完全表示）
+                            # Step 5: ブランチ名は省略しない（ディレクトリパスは完全表示）
                             line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
                                                             include_errors=False, include_active_files=False,
-                                                            max_branch_len=12, max_dir_len=None)
+                                                            max_branch_len=None, max_dir_len=None)
                             line1 = " | ".join(line1_parts)
 
                             if get_display_width(line1) <= terminal_width:
                                 lines.append(line1)
                             else:
-                                # Step 6: 最小構成（モデル + ブランチ短縮 + ディレクトリ完全 + メッセージ）
-                                # メッセージ数は最後まで表示を維持
+                                # Step 6: 最小構成（モデル + ブランチ完全 + ディレクトリ完全 + メッセージ）
                                 line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
                                                                 include_errors=False, include_active_files=False,
                                                                 include_messages=True,
-                                                                max_branch_len=10, max_dir_len=None)
+                                                                max_branch_len=None, max_dir_len=None)
                                 lines.append(" | ".join(line1_parts))
 
     # Line 2: Compact tokens
