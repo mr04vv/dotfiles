@@ -1829,7 +1829,7 @@ def truncate_text(text, max_len):
         return text[:max_len]
     return text[:max_len-3] + "..."
 
-def build_line1_parts(ctx, max_branch_len=20, max_dir_len=None,
+def build_line1_parts(ctx, max_branch_len=None, max_dir_len=None,
                       include_active_files=True, include_messages=True,
                       include_lines=True, include_errors=True, include_cost=True):
     """Line 1の各パーツを構築する
