@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 
+__version__ = "1.0.5"
+
 # ============================================
 # 📝 CONFIGURATION - Edit these values
 # ============================================
 
 # Display settings (True = show, False = hide)
 SHOW_LINE1    = True   # [Sonnet 4] | 🌿 main M2 | 📁 project | 💬 254
-SHOW_LINE2    = True   # Compact: 91.8K/160.0K ████████▒▒▒ 58%
+SHOW_LINE2    = True   # Context: 91.8K/200.0K ████████▒▒▒ 58%
 SHOW_LINE3    = True   # Session: 1h15m/5h ███▒▒▒▒▒▒▒▒ 25%
-SHOW_LINE4    = True   # Burn: 14.0M ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁
+SHOW_LINE4    = True   # Weekly: [64%] 32m, Extra: 7% $3.59/$50
 SHOW_SCHEDULE = True   # 📅 14:00 Meeting (in 30m) - swaps with Line1
 
 # Schedule settings (requires `gog` command)
@@ -31,16 +33,34 @@ import shutil
 import re
 import unicodedata
 from pathlib import Path
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone
 import time
-from collections import defaultdict
 
 # CONSTANTS
+
+# Block stats cache settings
+BLOCK_STATS_CACHE_TTL = 30  # 30 seconds
+BLOCK_STATS_CACHE_FILE = None
+
+# Transcript stats cache settings
+TRANSCRIPT_STATS_CACHE_TTL = 15  # 15 seconds
+TRANSCRIPT_STATS_CACHE_FILE = None
+
+# Ratelimit cache settings
+RATELIMIT_CACHE_TTL = 300  # 5 minutes
+RATELIMIT_CACHE_FILE = None
+RATELIMIT_LOCK_FILE = None
+
+# Auto-update settings
+AUTO_UPDATE_CHECK_TTL = 14400  # 4 hours
+AUTO_UPDATE_CACHE_FILE = None
+AUTO_UPDATE_LOCK_FILE = None
+AUTO_UPDATE_URL = "https://raw.githubusercontent.com/usedhonda/statusline/main/statusline.py"
 
 # Token compaction threshold - FALLBACK VALUE ONLY
 # Dynamic value is now calculated from API: context_window_size * 0.8
 # This constant is kept for backwards compatibility if API data is unavailable
-COMPACTION_THRESHOLD = 200000 * 0.8  # 80% of 200K tokens (fallback)
+COMPACTION_THRESHOLD = 200000 * 0.8  # 80% of 200K tokens (fallback). 1M context: 800K
 
 # TWO DISTINCT TOKEN CALCULATION SYSTEMS
 
@@ -53,7 +73,7 @@ COMPACTION_THRESHOLD = 200000 * 0.8  # 80% of 200K tokens (fallback)
 # Scope: Single conversation, monitors compression timing
 # Calculation: block_stats['total_tokens'] from detect_five_hour_blocks()
 # Display: Compact line (Line 2) - "118.1K/160.0K ████████▒▒▒▒ 74%"
-# Range: 0-200K tokens (until conversation gets compressed)
+# Range: 0 to context_window_size (200K or 1M, until conversation gets compressed)
 # Reset Point: When conversation gets compacted/compressed
 
 # 🕐 SESSION WINDOW SYSTEM (Session Management)
@@ -76,7 +96,7 @@ COMPACTION_THRESHOLD = 200000 * 0.8  # 80% of 200K tokens (fallback)
 class Colors:
     _colors = {
         'BRIGHT_CYAN': '\033[1;96m',
-        'BRIGHT_BLUE': '\033[1;94m', 
+        'BRIGHT_BLUE': '\033[1;94m',
         'BRIGHT_MAGENTA': '\033[1;95m',
         'BRIGHT_GREEN': '\033[1;92m',
         'BRIGHT_YELLOW': '\033[1;93m',
@@ -84,10 +104,15 @@ class Colors:
         'BRIGHT_WHITE': '\033[1;97m',
         'LIGHT_GRAY': '\033[1;97m',
         'DIM': '\033[1;97m',
+        'DIM_GREEN': '\033[32m',
+        'DIM_YELLOW': '\033[33m',
+        'DIM_RED': '\033[31m',
         'BOLD': '\033[1m',
         'BLINK': '\033[5m',
         'BG_RED': '\033[41m',
         'BG_YELLOW': '\033[43m',
+        'DARK_GRAY': '\033[38;5;237m',
+        'FUTURE_GRAY': '\033[38;5;242m',
         'RESET': '\033[0m'
     }
     
@@ -120,124 +145,163 @@ def get_display_width(text):
         width += 2 if ea in ('W', 'F') else 1
     return width
 
-def get_terminal_width():
-    """ターミナル幅を取得（安全なフォールバック付き）
+def get_terminal_size():
+    """ターミナルサイズ(幅, 高さ)を同時取得
 
     優先順位:
-    1. COLUMNS環境変数（明示的指定）
-    2. tmux pane幅（tmux環境の場合）
-    3. tput cols（TTY不要）
-    4. shutil.get_terminal_size()（TTY必要）
-    5. デフォルト80
+    1. tmux -t $TMUX_PANE (幅・高さ同時、最も正確)
+    2. shutil.get_terminal_size() (ioctl経由、TTY必要)
+    3. tput cols/lines (TERM依存)
+    4. COLUMNS/LINES 環境変数 (override用)
+    5. デフォルト (80, 24)
+
+    COLUMNS/LINESは部分override対応: COLUMNSだけ設定されていれば幅のみ上書き。
 
     Returns:
-        int: ターミナル幅（右端1文字問題対策で-1）
+        tuple[int, int]: (幅, 高さ)  ※幅は右端問題対策で-1済み、最小10
     """
+    raw_width = 0
+    raw_height = 0
+
     try:
-        # 1. 環境変数COLUMNSを最優先（テスト用・明示的指定）
+        # 1. tmux: 1コマンドで幅・高さ同時取得（最も正確）
+        if 'TMUX' in os.environ:
+            try:
+                pane_id = os.environ.get('TMUX_PANE', '')
+                cmd = ['tmux', 'display-message', '-p', '#{pane_width} #{pane_height}']
+                if pane_id:
+                    cmd = ['tmux', 'display-message', '-t', pane_id, '-p', '#{pane_width} #{pane_height}']
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True, text=True, timeout=1
+                )
+                if result.returncode == 0:
+                    parts = result.stdout.strip().split()
+                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                        raw_width = int(parts[0])
+                        raw_height = int(parts[1])
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+
+        # 2. shutil.get_terminal_size() (ioctl経由)
+        if raw_width == 0 or raw_height == 0:
+            try:
+                if sys.stdout.isatty():
+                    size = shutil.get_terminal_size()
+                    if size.columns > 0 and raw_width == 0:
+                        raw_width = size.columns
+                    if size.lines > 0 and raw_height == 0:
+                        raw_height = size.lines
+            except (OSError, AttributeError):
+                pass
+
+        # 3. tput cols/lines (TERM依存)
+        if raw_width == 0:
+            try:
+                result = subprocess.run(
+                    ['tput', 'cols'],
+                    capture_output=True, text=True, timeout=1
+                )
+                if result.returncode == 0 and result.stdout.strip().isdigit():
+                    raw_width = int(result.stdout.strip())
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+        if raw_height == 0:
+            try:
+                result = subprocess.run(
+                    ['tput', 'lines'],
+                    capture_output=True, text=True, timeout=1
+                )
+                if result.returncode == 0 and result.stdout.strip().isdigit():
+                    raw_height = int(result.stdout.strip())
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+
+        # 4. COLUMNS/LINES 環境変数 (override: 個別上書き対応)
         if 'COLUMNS' in os.environ:
             try:
-                return int(os.environ['COLUMNS']) - 1
+                raw_width = int(os.environ['COLUMNS'])
             except ValueError:
                 pass
-
-        # 2. tmux環境の場合、pane幅を取得（-t $TMUX_PANE で正しいペインを指定）
-        if 'TMUX' in os.environ:
-            try:
-                pane_id = os.environ.get('TMUX_PANE', '')
-                cmd = ['tmux', 'display-message', '-p', '#{pane_width}']
-                if pane_id:
-                    cmd = ['tmux', 'display-message', '-t', pane_id, '-p', '#{pane_width}']
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True, text=True, timeout=1
-                )
-                if result.returncode == 0 and result.stdout.strip().isdigit():
-                    return int(result.stdout.strip()) - 1
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                pass
-
-        # 3. tput cols（TTY不要、$TERMから取得）
-        try:
-            result = subprocess.run(
-                ['tput', 'cols'],
-                capture_output=True, text=True, timeout=1
-            )
-            if result.returncode == 0 and result.stdout.strip().isdigit():
-                return int(result.stdout.strip()) - 1
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            pass
-
-        # 4. shutil.get_terminal_size()（TTY必要）
-        if sys.stdout.isatty():
-            size = shutil.get_terminal_size()
-            if size.columns > 0:
-                return size.columns - 1
-
-    except (OSError, AttributeError):
-        pass
-
-    return 80  # デフォルト
-
-def get_terminal_height():
-    """ターミナル高さを取得（安全なフォールバック付き）
-
-    優先順位:
-    1. LINES環境変数（明示的指定）
-    2. tmux pane高さ（tmux環境の場合）
-    3. tput lines（TTY不要）
-    4. shutil.get_terminal_size()（TTY必要）
-    5. デフォルト4
-    """
-    try:
         if 'LINES' in os.environ:
             try:
-                return int(os.environ['LINES'])
+                raw_height = int(os.environ['LINES'])
             except ValueError:
                 pass
-
-        if 'TMUX' in os.environ:
-            try:
-                pane_id = os.environ.get('TMUX_PANE', '')
-                cmd = ['tmux', 'display-message', '-p', '#{pane_height}']
-                if pane_id:
-                    cmd = ['tmux', 'display-message', '-t', pane_id, '-p', '#{pane_height}']
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True, text=True, timeout=1
-                )
-                if result.returncode == 0 and result.stdout.strip().isdigit():
-                    return int(result.stdout.strip())
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                pass
-
-        try:
-            result = subprocess.run(
-                ['tput', 'lines'],
-                capture_output=True, text=True, timeout=1
-            )
-            if result.returncode == 0 and result.stdout.strip().isdigit():
-                return int(result.stdout.strip())
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            pass
-
-        if sys.stdout.isatty():
-            size = shutil.get_terminal_size()
-            if size.lines > 0:
-                return size.lines
 
     except (OSError, AttributeError):
         pass
 
-    return 4  # デフォルト
+    # デフォルト値
+    if raw_width == 0:
+        raw_width = 80
+    if raw_height == 0:
+        raw_height = 24
+
+    # clamp: 幅は-1して最小10、高さは最小1
+    width = max(10, raw_width - 1)
+    height = max(1, raw_height)
+
+    return width, height
+
+
+def get_terminal_width():
+    """後方互換ラッパー"""
+    w, _ = get_terminal_size()
+    return w
+
+
+def get_terminal_height():
+    """後方互換ラッパー"""
+    _, h = get_terminal_size()
+    return h
+
+def get_height_mode(height):
+    """高さからモードを判定（ヒステリシス付き）
+
+    モードフラップ防止:
+    - minimal -> normal: 高さ >= 10 で切替（余裕を持たせる）
+    - normal -> minimal: 高さ <= 7 で切替（すぐには戻さない）
+    - 8, 9 は前回モード維持（デッドゾーン）
+
+    Returns: 'minimal' or 'normal'
+    """
+    state_file = Path.home() / '.claude' / 'statusline-height-mode.txt'
+
+    prev_mode = None
+    try:
+        prev_mode = state_file.read_text().strip()
+        if prev_mode not in ('minimal', 'normal'):
+            prev_mode = None
+    except (FileNotFoundError, OSError):
+        pass
+
+    if prev_mode is None:
+        # 初回: 従来の閾値 8 で判定
+        mode = 'minimal' if height <= 8 else 'normal'
+    elif height >= 10:
+        mode = 'normal'
+    elif height <= 7:
+        mode = 'minimal'
+    else:
+        mode = prev_mode  # 8-9 はデッドゾーン
+
+    if mode != prev_mode:
+        try:
+            state_file.write_text(mode)
+        except OSError:
+            pass
+
+    return mode
+
 
 def get_display_mode(width):
     """ターミナル幅からモードを決定
 
     | モード | 幅 | 最長行 | 表示内容 |
     |--------|-----|--------|---------|
-    | full | >= 68 | 66文字 | 4行・全項目・装飾あり |
-    | compact | 35-67 | 30文字 | 4行・ラベル短縮・装飾削減 |
+    | full | >= 55 | 可変 | 4行・全項目・装飾あり・グラフ幅可変 |
+    | compact | 35-54 | 30文字 | 4行・ラベル短縮・装飾削減 |
     | tight | < 35 | 23文字 | 4行・最短表示 |
 
     Args:
@@ -245,7 +309,7 @@ def get_display_mode(width):
     Returns:
         str: 'full', 'compact', or 'tight'
     """
-    if width >= 68:
+    if width >= 60:
         return 'full'
     elif width >= 35:
         return 'compact'
@@ -341,16 +405,24 @@ def convert_local_to_utc(local_time):
 def get_percentage_color(percentage):
     """Get color based on percentage threshold"""
     if percentage >= 90:
-        return '\033[1;91m'  # 元の赤色
-    elif percentage >= 70:
+        return '\033[1;91m'  # bright red
+    elif percentage >= 80:
         return Colors.BRIGHT_YELLOW
     return Colors.BRIGHT_GREEN
+
+def get_percentage_color_dim(percentage):
+    """Get dim (non-bold) color for fractional progress bar segments"""
+    if percentage >= 90:
+        return Colors.DIM_RED
+    elif percentage >= 80:
+        return Colors.DIM_YELLOW
+    return Colors.DIM_GREEN
 
 def calculate_dynamic_padding(compact_text, session_text):
     """Calculate dynamic padding to align progress bars
     
     Args:
-        compact_text: Text part of compact line (e.g., "Compact: 111.6K/160.0K")
+        compact_text: Text part of compact line (e.g., "Context: 111.6K/200.0K")
         session_text: Text part of session line (e.g., "Session: 3h26m/5h")
     
     Returns:
@@ -372,59 +444,93 @@ def calculate_dynamic_padding(compact_text, session_text):
         return ' '
 
 def get_progress_bar(percentage, width=20, show_current_segment=False):
-    """Create a visual progress bar with optional current segment highlighting"""
-    filled = int(width * percentage / 100)
-    empty = width - filled
-    
+    """Create a visual progress bar with optional current segment highlighting
+
+    Fractional segments are shown in dim (non-bold) color to indicate partial fill.
+    """
+    filled_exact = width * percentage / 100
+    filled = int(filled_exact)
+    fraction = filled_exact - filled
+    has_fraction = fraction > 0.01 and filled < width
+
     color = get_percentage_color(percentage)
-    
+    dim_color = get_percentage_color_dim(percentage)
+
     if show_current_segment and filled < width:
-        # 完了済みは元の色を保持、現在進行中のセグメントのみ特別表示
         completed_bar = color + '█' * filled if filled > 0 else ''
-        current_bar = Colors.BRIGHT_WHITE + '▓' + Colors.RESET  # 白く点滅風
-        remaining_bar = Colors.LIGHT_GRAY + '▒' * (empty - 1) + Colors.RESET if empty > 1 else ''
-        
+        current_bar = Colors.BRIGHT_WHITE + '▓' + Colors.RESET
+        remaining = width - filled - 1
+        remaining_bar = Colors.LIGHT_GRAY + '▒' * remaining + Colors.RESET if remaining > 0 else ''
         bar = completed_bar + current_bar + remaining_bar
     else:
-        # 従来の表示
-        bar = color + '█' * filled + Colors.LIGHT_GRAY + '▒' * empty + Colors.RESET
-    
+        bar = color + '█' * filled
+        if has_fraction:
+            bar += dim_color + '█'
+            empty = width - filled - 1
+        else:
+            empty = width - filled
+        bar += Colors.LIGHT_GRAY + '▒' * empty + Colors.RESET
+
     return bar
 
 # REMOVED: create_line_graph() - unused function (replaced by create_mini_chart)
 
 # REMOVED: create_bar_chart() - unused function (replaced by create_horizontal_chart)
 
-def create_sparkline(values, width=20):
-    """Create a compact sparkline graph"""
+def create_sparkline(values, width=20, current_pos=None, future_style="block"):
+    """Create a compact sparkline graph.
+
+    Args:
+        values: List of numeric values to plot
+        width: Display width in characters
+        current_pos: Optional float 0.0-1.0 indicating current time position.
+                     Segments after current_pos are rendered as future.
+        future_style: Legacy param (kept for compat). All future segments use ▁ in FUTURE_GRAY.
+    """
     if not values:
         return ""
-    
+
     # Use unicode block characters for sparkline
     chars = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
-    
+
+    data_width = min(width, len(values))
+
+    # Calculate current segment boundary
+    current_segment = data_width  # default: all segments are "past"
+    if current_pos is not None:
+        current_segment = int(current_pos * data_width)
+        # Clamp to valid range
+        current_segment = max(0, min(data_width, current_segment))
+
     max_val = max(values)
     min_val = min(values)
-    
+
     if max_val == min_val:
-        # If all values are the same
-        if max_val == 0:
-            # All zeros (idle) - show lowest bars
-            return Colors.LIGHT_GRAY + chars[0] * min(width, len(values)) + Colors.RESET
-        else:
-            # All same non-zero value - show medium bars
-            return Colors.BRIGHT_GREEN + chars[4] * min(width, len(values)) + Colors.RESET
-    
+        # All values are the same
+        sparkline = ""
+        for i in range(data_width):
+            if i > current_segment:
+                sparkline += Colors.FUTURE_GRAY + chars[0] + Colors.RESET
+            elif max_val == 0:
+                sparkline += Colors.LIGHT_GRAY + chars[0] + Colors.RESET
+            else:
+                sparkline += Colors.BRIGHT_GREEN + chars[4] + Colors.RESET
+        return sparkline
+
     sparkline = ""
-    data_width = min(width, len(values))
     step = len(values) / data_width if len(values) > data_width else 1
-    
+
     for i in range(data_width):
+        # Future segments (strictly after current)
+        if i > current_segment:
+            sparkline += Colors.FUTURE_GRAY + chars[0] + Colors.RESET
+            continue
+
         idx = int(i * step) if step > 1 else i
         if idx < len(values):
             normalized = (values[idx] - min_val) / (max_val - min_val)
             char_idx = min(len(chars) - 1, int(normalized * len(chars)))
-            
+
             # Color based on value
             if normalized > 0.7:
                 color = Colors.BRIGHT_RED
@@ -432,9 +538,9 @@ def create_sparkline(values, width=20):
                 color = Colors.BRIGHT_YELLOW
             else:
                 color = Colors.BRIGHT_GREEN
-            
+
             sparkline += color + chars[char_idx] + Colors.RESET
-    
+
     return sparkline
 
 # REMOVED: get_all_messages() - unused function (replaced by load_all_messages_chronologically)
@@ -510,17 +616,26 @@ def get_real_time_burn_data(session_id=None):
 # REMOVED: show_live_burn_graph() - unused function (replaced by get_burn_line)
 def calculate_tokens_from_transcript(file_path):
     """Calculate total tokens from transcript file by summing all message usage data"""
+    # Check 15s file cache (TTL + path + mtime validation)
+    file_path = Path(file_path) if not isinstance(file_path, Path) else file_path
+    cached = _load_transcript_stats_cache(file_path)
+    if cached:
+        return (cached['total_tokens'], cached['message_count'], cached['error_count'],
+                cached['user_messages'], cached['assistant_messages'],
+                cached['input_tokens'], cached['output_tokens'],
+                cached['cache_creation'], cached['cache_read'])
+
     message_count = 0
     error_count = 0
     user_messages = 0
     assistant_messages = 0
-    
+
     # トークンの詳細追跡（全メッセージの合計）
     total_input_tokens = 0
     total_output_tokens = 0
     total_cache_creation = 0
     total_cache_read = 0
-    
+
     try:
         with open(file_path, 'r') as f:
             for line in f:
@@ -571,9 +686,11 @@ def calculate_tokens_from_transcript(file_path):
         'cache_creation_input_tokens': total_cache_creation,
         'cache_read_input_tokens': total_cache_read
     })
-    
-    return (total_tokens, message_count, error_count, user_messages, assistant_messages,
-            total_input_tokens, total_output_tokens, total_cache_creation, total_cache_read)
+
+    result = (total_tokens, message_count, error_count, user_messages, assistant_messages,
+              total_input_tokens, total_output_tokens, total_cache_creation, total_cache_read)
+    _save_transcript_stats_cache(file_path, result)
+    return result
 
 def find_session_transcript(session_id):
     """Find transcript file for the current session"""
@@ -617,14 +734,16 @@ def find_all_transcript_files(hours_limit=6):
 
     return transcript_files
 
-def load_all_messages_chronologically(hours_limit=6):
+def load_all_messages_chronologically(hours_limit=6, transcript_files=None):
     """Load messages from recently updated transcripts in chronological order
 
     Args:
         hours_limit: Only load from files modified within this many hours (default: 6)
+        transcript_files: Pre-found file list to skip redundant find_all_transcript_files()
     """
     all_messages = []
-    transcript_files = find_all_transcript_files(hours_limit=hours_limit)
+    if transcript_files is None:
+        transcript_files = find_all_transcript_files(hours_limit=hours_limit)
 
     for transcript_file in transcript_files:
         try:
@@ -1284,26 +1403,31 @@ def generate_realtime_burn_timeline(block_start_time, duration_seconds):
     
     return timeline
 
-def generate_real_burn_timeline(block_stats, current_block):
+def generate_real_burn_timeline(block_stats, current_block, api_block_start_utc=None):
     """実際のメッセージデータからBurnスパークラインを生成（5時間ウィンドウ全体対応）
-    
+
     CRITICAL: Uses REAL message timing data ONLY. NO fake patterns allowed.
     Distributes tokens based on actual message timestamps across 15-minute segments.
+
+    Args:
+        api_block_start_utc: If provided (from API five_hour.resets_at - 5h),
+            overrides block_stats['start_time'] to align sparkline with API window.
     """
     timeline = [0] * 20  # 20セグメント（各15分）
-    
+
     if not block_stats or not current_block or 'messages' not in current_block:
         return timeline
-    
+
     try:
-        block_start = block_stats['start_time']
-        current_time = datetime.now(timezone.utc).replace(tzinfo=None)  # UTC統一
-        
-        # 内部処理は全てUTCで統一
-        if hasattr(block_start, 'tzinfo') and block_start.tzinfo:
-            block_start_utc = block_start.astimezone(timezone.utc).replace(tzinfo=None)
+        # Use API-derived start time if available, otherwise fall back to local detection
+        if api_block_start_utc is not None:
+            block_start_utc = api_block_start_utc
         else:
-            block_start_utc = block_start  # 既にUTC前提
+            block_start = block_stats['start_time']
+            if hasattr(block_start, 'tzinfo') and block_start.tzinfo:
+                block_start_utc = block_start.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                block_start_utc = block_start
         
         # デバッグ: メッセージの時間分散を確認 (デバッグ時のみ有効化)
         # import sys
@@ -1361,7 +1485,7 @@ def generate_real_burn_timeline(block_stats, current_block):
         # if segment_info:
         #     print(f"DEBUG: Segment message counts (first 10): {', '.join(segment_info)}", file=sys.stderr)
     
-    except Exception as e:
+    except Exception:
         # import sys
         # print(f"DEBUG: Error in generate_real_burn_timeline: {e}", file=sys.stderr)
         # エラー時は空のタイムラインを返す
@@ -1727,7 +1851,7 @@ def detect_active_periods(messages, idle_threshold=5*60):
 
 # REMOVED: get_time_progress_bar() - unused function (replaced by get_progress_bar)
 
-def calculate_cost(input_tokens, output_tokens, cache_creation, cache_read, model_name="Unknown"):
+def calculate_cost(input_tokens, output_tokens, cache_creation, cache_read, model_name="Unknown", model_id=""):
     """Calculate estimated cost based on token usage
     
     Pricing (per million tokens) - Claude 4 models (2025):
@@ -1751,16 +1875,17 @@ def calculate_cost(input_tokens, output_tokens, cache_creation, cache_read, mode
     - Cache read: $0.10
     """
     
-    # モデル名からタイプを判定
+    # モデル名またはIDからタイプを判定
     model_lower = model_name.lower()
-    
-    if "haiku" in model_lower:
+    id_lower = model_id.lower() if model_id else ""
+
+    if "haiku" in model_lower or "haiku" in id_lower:
         # Claude 3.5 Haiku pricing (legacy)
         input_rate = 1.00
         output_rate = 5.00
         cache_write_rate = 1.25
         cache_read_rate = 0.10
-    elif "sonnet" in model_lower:
+    elif "sonnet" in model_lower or "sonnet" in id_lower:
         # Claude Sonnet 4 pricing
         input_rate = 3.00
         output_rate = 15.00
@@ -1806,6 +1931,9 @@ def shorten_model_name(model, tight=False):
     # "Claude " プレフィックスを除去
     name = re.sub(r'^Claude\s+', '', model, flags=re.IGNORECASE)
 
+    # "(1M context)" "(200k context)" などのコンテキストサイズ suffix を除去
+    name = re.sub(r'\s*\([\d.]+[kKmM]?\s+context\)', '', name).strip()
+
     # "3.5 Haiku" → "Haiku 3.5" に正規化（バージョンが前にある場合）
     m = re.match(r'^([\d.]+)\s+(Haiku|Sonnet|Opus)', name, re.IGNORECASE)
     if m:
@@ -1821,6 +1949,16 @@ def shorten_model_name(model, tight=False):
 
     return name
 
+def should_show_1m_badge(model, context_size):
+    """1Mバッジを表示すべきか判定。1Mがデフォルトのモデルでは非表示。"""
+    if context_size <= 200000:
+        return False
+    # Opus 4.6 は 1M のみなのでバッジ不要
+    normalized = model.lower()
+    if 'opus' in normalized and '4.6' in normalized:
+        return False
+    return True
+
 def truncate_text(text, max_len):
     """テキストを最大長で切り詰め、...を追加"""
     if len(text) <= max_len:
@@ -1829,9 +1967,11 @@ def truncate_text(text, max_len):
         return text[:max_len]
     return text[:max_len-3] + "..."
 
-def build_line1_parts(ctx, max_branch_len=None, max_dir_len=None,
+def build_line1_parts(ctx, max_branch_len=20, max_dir_len=None,
                       include_active_files=True, include_messages=True,
-                      include_lines=True, include_errors=True, include_cost=True):
+                      include_lines=True, include_errors=True, include_cost=True,
+                      tight_model=False, include_context_badge=True,
+                      include_dir=True):
     """Line 1の各パーツを構築する
 
     Args:
@@ -1843,15 +1983,19 @@ def build_line1_parts(ctx, max_branch_len=None, max_dir_len=None,
         include_lines: 行変更数を含めるか
         include_errors: エラー数を含めるか
         include_cost: コストを含めるか
+        tight_model: モデル名を超短縮形式にするか（Op4.6など）
+        include_context_badge: 1Mコンテキストバッジを表示するか
+        include_dir: ディレクトリを含めるか
 
     Returns:
         list: Line 1のパーツのリスト
     """
     parts = []
 
-    # Model (always shortened)
-    model_name = shorten_model_name(ctx['model'])
-    parts.append(f"{Colors.BRIGHT_YELLOW}[{model_name}]{Colors.RESET}")
+    # Model (normal or tight)
+    model_name = shorten_model_name(ctx['model'], tight=tight_model)
+    ctx_suffix = "(1M)" if include_context_badge and should_show_1m_badge(ctx['model'], ctx.get('context_size', 200000)) else ""
+    parts.append(f"{Colors.BRIGHT_YELLOW}[{model_name}{Colors.BRIGHT_MAGENTA}{ctx_suffix}{Colors.BRIGHT_YELLOW}]{Colors.RESET}")
 
     # Git branch (no untracked files count)
     if ctx['git_branch']:
@@ -1865,10 +2009,11 @@ def build_line1_parts(ctx, max_branch_len=None, max_dir_len=None,
         parts.append(git_display)
 
     # Directory
-    dir_name = ctx['current_dir']
-    if max_dir_len and len(dir_name) > max_dir_len:
-        dir_name = truncate_text(dir_name, max_dir_len)
-    parts.append(f"{Colors.BRIGHT_CYAN}📁 {dir_name}{Colors.RESET}")
+    if include_dir:
+        dir_name = ctx['current_dir']
+        if max_dir_len and len(dir_name) > max_dir_len:
+            dir_name = truncate_text(dir_name, max_dir_len)
+        parts.append(f"{Colors.BRIGHT_CYAN}📁 {dir_name}{Colors.RESET}")
 
     # Active files
     if include_active_files and ctx['active_files'] > 0:
@@ -1927,13 +2072,19 @@ def format_agent_line(ctx, agent_name):
     return " | ".join(parts)
 
 def format_output_full(ctx, terminal_width=None):
-    """Full mode (>= 68 chars): 4行・全項目・装飾あり
+    """Full mode (>= 55 chars): 4行・全項目・装飾あり・グラフ幅可変
 
-    Example:
+    Example (width >= 68):
     [Son4] | 🌿 main M2 | 📁 statusline | 💬 254 | 💰 $1.23
-    Compact: ████████▒▒▒▒▒▒▒ [58%] 91.8K/160.0K ♻️ 99%
-    Session: ███▒▒▒▒▒▒▒▒▒▒▒▒ [25%] 1h15m/5h (08:00-13:00)
-    Burn:    ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁ 14.0M tok
+    Context: ████████▒▒▒▒▒▒▒ [58%] 91.8K/200.0K ♻️ 99%
+    Session: █▇▁▁▂▄▁▁▁▁▁▁▁▁▁▁▁▁▁▁ 1h27m/5h, 40.3M token(462K t/m) (3am-8am)
+    Weekly:  ████████████▒▒▒▒▒▒▒▒ [64%] 32m, Extra: 7% $3.59/$50
+
+    Example (width 55-67):
+    [Son4] | 🌿 main M2 | 📁 statusline
+    Context: ████▒▒▒▒▒ [58%] 91.8K/200.0K ♻️ 99%
+    Session: █▇▁▁▂▄▁▁▁ 1h27m/5h, 40.3M token (3am-8am)
+    Weekly:  ████████▒▒ [64%] 32m, Extra: 7% $3.59/$50
 
     Args:
         ctx: コンテキスト辞書
@@ -1943,10 +2094,15 @@ def format_output_full(ctx, terminal_width=None):
 
     # Line 1: Model/Git/Dir/Messages (with dynamic length adjustment)
     # Or schedule display if --schedule is enabled (time-based swap)
-    if ctx['show_line1']:
-        if terminal_width is None:
-            terminal_width = get_terminal_width()
+    if terminal_width is None:
+        terminal_width = get_terminal_width()
 
+    # Determine graph width: smoothly scale with terminal width
+    # Non-graph content of longest line (L4 Weekly) is ~39 chars + ~4 margin,
+    # so graph_width = terminal_width - 43, clamped to [8, 20]
+    graph_width = min(20, max(8, terminal_width - 43))
+
+    if ctx['show_line1']:
         # Check if we should show schedule line (swap every SCHEDULE_SWAP_INTERVAL seconds)
         show_schedule_now = False
         schedule_line = None
@@ -1963,54 +2119,48 @@ def format_output_full(ctx, terminal_width=None):
         if show_schedule_now and schedule_line:
             lines.append(schedule_line)
         else:
-            # Normal Line 1: Model/Git/Dir/Messages
-            # Step 1: 全要素で構築
-            line1_parts = build_line1_parts(ctx)
-            line1 = " | ".join(line1_parts)
-
-            if get_display_width(line1) <= terminal_width:
-                lines.append(line1)
-            else:
-                # Step 2: 低優先度要素を削除（コスト、行変更、エラー）
-                line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
-                                                include_errors=False)
-                line1 = " | ".join(line1_parts)
-
-                if get_display_width(line1) <= terminal_width:
-                    lines.append(line1)
-                else:
-                    # Step 3: アクティブファイルも削除
-                    line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
-                                                    include_errors=False, include_active_files=False)
-                    line1 = " | ".join(line1_parts)
-
-                    if get_display_width(line1) <= terminal_width:
-                        lines.append(line1)
-                    else:
-                        # Step 4: ディレクトリ名は短縮しない（完全パス表示）
-                        line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
-                                                        include_errors=False, include_active_files=False,
-                                                        max_dir_len=None)
-                        line1 = " | ".join(line1_parts)
-
-                        if get_display_width(line1) <= terminal_width:
-                            lines.append(line1)
-                        else:
-                            # Step 5: ブランチ名は省略しない（ディレクトリパスは完全表示）
-                            line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
-                                                            include_errors=False, include_active_files=False,
-                                                            max_branch_len=None, max_dir_len=None)
-                            line1 = " | ".join(line1_parts)
-
-                            if get_display_width(line1) <= terminal_width:
-                                lines.append(line1)
-                            else:
-                                # Step 6: 最小構成（モデル + ブランチ完全 + ディレクトリ完全 + メッセージ）
-                                line1_parts = build_line1_parts(ctx, include_cost=False, include_lines=False,
-                                                                include_errors=False, include_active_files=False,
-                                                                include_messages=True,
-                                                                max_branch_len=None, max_dir_len=None)
-                                lines.append(" | ".join(line1_parts))
+            # Normal Line 1: progressive shrinking by priority
+            #
+            # 優先度（高→低）: モデル > ブランチ > git status > 💬メッセージ > 📁ディレクトリ > 💰コスト > +/-行数 > ⚠️エラー > 📝ファイル > (1M)バッジ
+            #
+            # 段階:
+            #  1. 全要素（ブランチ15文字）
+            #  2. 💰コスト・+/-行数・⚠️エラー削除
+            #  3. 📝ファイル削除・モデル名短縮
+            #  4. ブランチ12・ディレクトリ12に短縮
+            #  5. ブランチ10・(1M)バッジ削除
+            #  6. 💬メッセージ削除・ディレクトリ10
+            #  7. 📁ディレクトリ削除（ブランチのほうが重要）
+            #  8. セパレータ " | " → " "（compact風）
+            shrink_steps = [
+                # (separator, build_line1_parts kwargs)
+                (" | ", dict(max_branch_len=15)),
+                (" | ", dict(include_cost=False, include_lines=False, include_errors=False)),
+                (" | ", dict(include_cost=False, include_lines=False, include_errors=False,
+                             include_active_files=False, tight_model=True, max_branch_len=15)),
+                (" | ", dict(include_cost=False, include_lines=False, include_errors=False,
+                             include_active_files=False, tight_model=True,
+                             max_branch_len=12, max_dir_len=12)),
+                (" | ", dict(include_cost=False, include_lines=False, include_errors=False,
+                             include_active_files=False, tight_model=True,
+                             max_branch_len=10, max_dir_len=12, include_context_badge=False)),
+                (" | ", dict(include_cost=False, include_lines=False, include_errors=False,
+                             include_active_files=False, include_messages=False, tight_model=True,
+                             max_branch_len=10, max_dir_len=10, include_context_badge=False)),
+                (" | ", dict(include_cost=False, include_lines=False, include_errors=False,
+                             include_active_files=False, include_messages=False, include_dir=False,
+                             tight_model=True, max_branch_len=10, include_context_badge=False)),
+                (" ",   dict(include_cost=False, include_lines=False, include_errors=False,
+                             include_active_files=False, include_messages=False, include_dir=False,
+                             tight_model=True, max_branch_len=8, include_context_badge=False)),
+            ]
+            for sep, kwargs in shrink_steps:
+                line1_parts = build_line1_parts(ctx, **kwargs)
+                line1 = sep.join(line1_parts)
+                emoji_margin = 2  # emoji幅のターミナル差異を吸収
+                if get_display_width(line1) <= terminal_width - emoji_margin:
+                    break
+            lines.append(line1)
 
     # Line 2: Compact tokens
     if ctx['show_line2']:
@@ -2022,42 +2172,76 @@ def format_output_full(ctx, terminal_width=None):
         if percentage >= 85:
             title_color = f"{Colors.BG_RED}{Colors.BRIGHT_WHITE}{Colors.BOLD}"
             percentage_display = f"{Colors.BG_RED}{Colors.BRIGHT_WHITE}{Colors.BOLD}[{percentage}%]{Colors.RESET}"
-            compact_label = f"{title_color}Compact:{Colors.RESET}"
+            compact_label = f"{title_color}Context:{Colors.RESET}"
         else:
-            compact_label = f"{Colors.BRIGHT_CYAN}Compact:{Colors.RESET}"
+            compact_label = f"{Colors.BRIGHT_CYAN}Context:{Colors.RESET}"
             percentage_display = f"{percentage_color}{Colors.BOLD}[{percentage}%]{Colors.RESET}"
 
         line2_parts.append(compact_label)
-        line2_parts.append(get_progress_bar(percentage, width=20))
+        line2_parts.append(get_progress_bar(percentage, width=graph_width))
         line2_parts.append(percentage_display)
-        line2_parts.append(f"{Colors.BRIGHT_WHITE}{compact_display}/{format_token_count(ctx['compaction_threshold'])}{Colors.RESET}")
+        denom = ctx['context_size']
+        line2_parts.append(f"{Colors.BRIGHT_WHITE}{compact_display}/{format_token_count(denom)}{Colors.RESET}")
 
         if ctx['cache_ratio'] >= 50:
             line2_parts.append(f"{Colors.BRIGHT_GREEN}♻️ {int(ctx['cache_ratio'])}% cached{Colors.RESET}")
 
+        if ctx.get('exceeds_200k'):
+            if ctx.get('context_size', 200000) > 200000:
+                line2_parts.append(f"{Colors.BG_YELLOW}{Colors.BOLD} PREMIUM {Colors.RESET}")
+            else:
+                line2_parts.append(f"{Colors.BG_RED}{Colors.BRIGHT_WHITE} >200K {Colors.RESET}")
+
         lines.append(" ".join(line2_parts))
 
-    # Line 3: Session time
-    if ctx['show_line3'] and ctx['session_duration']:
-        line3_parts = []
-        line3_parts.append(f"{Colors.BRIGHT_CYAN}Session:{Colors.RESET}")
-        line3_parts.append(get_progress_bar(ctx['block_progress'], width=20, show_current_segment=True))
-        line3_parts.append(f"{Colors.BRIGHT_WHITE}[{int(ctx['block_progress'])}%]{Colors.RESET}")
-        line3_parts.append(f"{Colors.BRIGHT_WHITE}{ctx['session_duration']}/5h{Colors.RESET}")
+    # Line 3: Session (sparkline + 5h utilization + tokens + API time range)
+    if ctx['show_line3']:
+        if ctx['session_duration'] or ctx.get('api_session_range'):
+            line3_parts = []
+            line3_parts.append(f"{Colors.BRIGHT_CYAN}Session:{Colors.RESET}")
+            # Use burn sparkline instead of progress bar
+            if ctx['burn_timeline']:
+                sparkline = create_sparkline(ctx['burn_timeline'], width=graph_width, current_pos=ctx.get('burn_current_pos'), future_style="bar")
+                line3_parts.append(sparkline)
+            else:
+                line3_parts.append(get_progress_bar(ctx['block_progress'], width=graph_width, show_current_segment=True))
+            # 5-hour utilization from API
+            if ctx.get('five_hour_utilization') is not None:
+                util = int(ctx['five_hour_utilization'])
+                util_color = _get_utilization_color(util)
+                line3_parts.append(f"{util_color}[{util}%]{Colors.RESET}")
+            # Token count (without burn rate)
+            if ctx['block_tokens'] > 0:
+                tokens_display = format_token_count_short(ctx['block_tokens'])
+                line3_parts.append(f"{Colors.BRIGHT_WHITE}{tokens_display} token{Colors.RESET}")
+            # Time range from API
+            if ctx.get('api_session_range'):
+                start, end = ctx['api_session_range']
+                line3_parts.append(f"{Colors.BRIGHT_GREEN}({start}-{end}){Colors.RESET}")
+            lines.append(" ".join(line3_parts))
+        else:
+            lines.append(f"{Colors.BRIGHT_CYAN}Session:{Colors.RESET} --")
 
-        if ctx['session_time_info']:
-            line3_parts.append(ctx['session_time_info'])
-
-        lines.append(" ".join(line3_parts))
-
-    # Line 4: Burn rate
-    if ctx['show_line4'] and ctx['burn_line']:
-        lines.append(ctx['burn_line'])
+    # Line 4: Weekly usage
+    if ctx['show_line4']:
+        if ctx.get('weekly_line'):
+            if graph_width != 20 and ctx.get('ratelimit_data'):
+                # Regenerate weekly line with narrower graph width
+                weekly_line = get_weekly_line(ctx['ratelimit_data'], ctx.get('weekly_timeline'),
+                                             sparkline_width=graph_width)
+                if weekly_line:
+                    lines.append(weekly_line)
+                else:
+                    lines.append(ctx['weekly_line'])
+            else:
+                lines.append(ctx['weekly_line'])
+        else:
+            lines.append(f"{Colors.BRIGHT_CYAN}Weekly: {Colors.RESET} --")
 
     return lines
 
 def format_output_compact(ctx):
-    """Compact mode (55-71 chars): 4行・ラベル短縮・装飾削減
+    """Compact mode (35-54 chars): 4行・ラベル短縮・装飾削減
 
     Example:
     [Son4] main M2+1 statusline 💬254
@@ -2070,11 +2254,17 @@ def format_output_compact(ctx):
     # Line 1: Shortened model/git/dir
     if ctx['show_line1']:
         line1_parts = []
-        short_model = shorten_model_name(ctx['model'])
-        line1_parts.append(f"{Colors.BRIGHT_YELLOW}[{short_model}]{Colors.RESET}")
+        # Compact mode: use tight model name for space efficiency
+        short_model = shorten_model_name(ctx['model'], tight=True)
+        ctx_suffix = "(1M)" if should_show_1m_badge(ctx['model'], ctx.get('context_size', 200000)) else ""
+        line1_parts.append(f"{Colors.BRIGHT_YELLOW}[{short_model}{Colors.BRIGHT_MAGENTA}{ctx_suffix}{Colors.BRIGHT_YELLOW}]{Colors.RESET}")
 
         if ctx['git_branch']:
-            git_display = f"{Colors.BRIGHT_GREEN}{ctx['git_branch']}"
+            branch = ctx['git_branch']
+            # Compact mode: truncate long branch names
+            if len(branch) > 10:
+                branch = truncate_text(branch, 10)
+            git_display = f"{Colors.BRIGHT_GREEN}{branch}"
             if ctx['modified_files'] > 0:
                 git_display += f" M{ctx['modified_files']}"
             if ctx['untracked_files'] > 0:
@@ -2093,27 +2283,77 @@ def format_output_compact(ctx):
     if ctx['show_line2']:
         percentage = ctx['percentage']
         compact_display = format_token_count_short(ctx['compact_tokens'])
-        threshold_display = format_token_count_short(ctx['compaction_threshold'])
+        denom = ctx['context_size']
+        threshold_display = format_token_count_short(denom)
         percentage_color = get_percentage_color(percentage)
 
         line2 = f"{Colors.BRIGHT_CYAN}C:{Colors.RESET} {get_progress_bar(percentage, width=12)} "
         line2 += f"{percentage_color}[{percentage}%]{Colors.RESET} "
         line2 += f"{Colors.BRIGHT_WHITE}{compact_display}/{threshold_display}{Colors.RESET}"
+        if ctx.get('exceeds_200k'):
+            if ctx.get('context_size', 200000) > 200000:
+                line2 += f" {Colors.BG_YELLOW}PRM{Colors.RESET}"
+            else:
+                line2 += f" {Colors.BG_RED}>200K{Colors.RESET}"
         lines.append(line2)
 
-    # Line 3: Session (shortened)
-    if ctx['show_line3'] and ctx['session_duration']:
-        line3 = f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} {get_progress_bar(ctx['block_progress'], width=12)} "
-        line3 += f"{Colors.BRIGHT_WHITE}[{int(ctx['block_progress'])}%]{Colors.RESET} "
-        line3 += f"{Colors.BRIGHT_WHITE}{ctx['session_duration']}/5h{Colors.RESET}"
-        lines.append(line3)
+    # Line 3: Session (shortened with sparkline + utilization% + time range)
+    if ctx['show_line3']:
+        if ctx['session_duration'] or ctx.get('api_session_range'):
+            if ctx['burn_timeline']:
+                sparkline = create_sparkline(ctx['burn_timeline'], width=12, current_pos=ctx.get('burn_current_pos'), future_style="bar")
+                line3 = f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} {sparkline} "
+            else:
+                line3 = f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} {get_progress_bar(ctx['block_progress'], width=12)} "
+            if ctx.get('five_hour_utilization') is not None:
+                util = int(ctx['five_hour_utilization'])
+                util_color = _get_utilization_color(util)
+                line3 += f"{util_color}[{util}%]{Colors.RESET}"
+            if ctx.get('api_session_range'):
+                start, end = ctx['api_session_range']
+                line3 += f" {Colors.BRIGHT_GREEN}({start}-{end}){Colors.RESET}"
+            lines.append(line3)
+        else:
+            lines.append(f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} --")
 
-    # Line 4: Burn (shortened)
-    if ctx['show_line4'] and ctx['burn_timeline']:
-        sparkline = create_sparkline(ctx['burn_timeline'], width=12)
-        tokens_display = format_token_count_short(ctx['block_tokens'])
-        line4 = f"{Colors.BRIGHT_CYAN}B:{Colors.RESET} {sparkline} {Colors.BRIGHT_WHITE}{tokens_display}{Colors.RESET}"
-        lines.append(line4)
+    # Line 4: Weekly (shortened with remaining time)
+    if ctx['show_line4']:
+        if ctx.get('weekly_line'):
+            rl = ctx.get('ratelimit_data')
+            if rl and rl.get('seven_day'):
+                seven_day = rl.get('seven_day') or {}
+                util = seven_day.get('utilization', 0)
+                util_color = _get_utilization_color(util)
+                wt = ctx.get('weekly_timeline')
+                if wt and any(v > 0 for v in wt):
+                    spark = create_sparkline(wt, width=12, current_pos=ctx.get('weekly_current_pos'))
+                    line4 = f"{Colors.BRIGHT_CYAN}W:{Colors.RESET} {spark} {util_color}[{int(util)}%]{Colors.RESET}"
+                else:
+                    line4 = f"{Colors.BRIGHT_CYAN}W:{Colors.RESET} {get_progress_bar(util, width=12)} {util_color}[{int(util)}%]{Colors.RESET}"
+                # Add remaining time (e.g. "6d10h07m")
+                resets_at_str = seven_day.get('resets_at')
+                if resets_at_str:
+                    try:
+                        resets_at = datetime.fromisoformat(resets_at_str)
+                        remaining_s = max(0, (resets_at - datetime.now(timezone.utc)).total_seconds())
+                        if remaining_s < 3600:
+                            line4 += f" {Colors.BRIGHT_WHITE}{int(remaining_s / 60)}m{Colors.RESET}"
+                        elif remaining_s < 86400:
+                            h = int(remaining_s / 3600)
+                            m = int((remaining_s % 3600) / 60)
+                            line4 += f" {Colors.BRIGHT_WHITE}{h}h{m:02d}m{Colors.RESET}"
+                        else:
+                            d = int(remaining_s / 86400)
+                            h = int((remaining_s % 86400) / 3600)
+                            m = int((remaining_s % 3600) / 60)
+                            line4 += f" {Colors.BRIGHT_WHITE}{d}d{h}h{m:02d}m{Colors.RESET}"
+                    except (ValueError, TypeError):
+                        pass
+                lines.append(line4)
+            else:
+                lines.append(ctx['weekly_line'])
+        else:
+            lines.append(f"{Colors.BRIGHT_CYAN}W:{Colors.RESET} --")
 
     return lines
 
@@ -2132,10 +2372,15 @@ def format_output_tight(ctx):
     if ctx['show_line1']:
         line1_parts = []
         short_model = shorten_model_name(ctx['model'], tight=True)
-        line1_parts.append(f"{Colors.BRIGHT_YELLOW}[{short_model}]{Colors.RESET}")
+        ctx_suffix = "(1M)" if should_show_1m_badge(ctx['model'], ctx.get('context_size', 200000)) else ""
+        line1_parts.append(f"{Colors.BRIGHT_YELLOW}[{short_model}{Colors.BRIGHT_MAGENTA}{ctx_suffix}{Colors.BRIGHT_YELLOW}]{Colors.RESET}")
 
         if ctx['git_branch']:
-            git_display = f"{Colors.BRIGHT_GREEN}{ctx['git_branch']}"
+            branch = ctx['git_branch']
+            # Tight mode: truncate long branch names more aggressively
+            if len(branch) > 10:
+                branch = truncate_text(branch, 10)
+            git_display = f"{Colors.BRIGHT_GREEN}{branch}"
             if ctx['modified_files'] > 0 or ctx['untracked_files'] > 0:
                 git_display += f" M{ctx['modified_files']}+{ctx['untracked_files']}"
             git_display += Colors.RESET
@@ -2151,20 +2396,70 @@ def format_output_tight(ctx):
 
         line2 = f"{Colors.BRIGHT_CYAN}C:{Colors.RESET} {get_progress_bar(percentage, width=8)} "
         line2 += f"{percentage_color}[{percentage}%]{Colors.RESET} {Colors.BRIGHT_WHITE}{compact_display}{Colors.RESET}"
+        if ctx.get('exceeds_200k'):
+            if ctx.get('context_size', 200000) > 200000:
+                line2 += f" {Colors.BG_YELLOW}PRM{Colors.RESET}"
+            else:
+                line2 += f" {Colors.BG_RED}>200K{Colors.RESET}"
         lines.append(line2)
 
-    # Line 3: Session (ultra short)
-    if ctx['show_line3'] and ctx['session_duration']:
-        line3 = f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} {get_progress_bar(ctx['block_progress'], width=8)} "
-        line3 += f"{Colors.BRIGHT_WHITE}[{int(ctx['block_progress'])}%]{Colors.RESET} {Colors.BRIGHT_WHITE}{ctx['session_duration']}{Colors.RESET}"
-        lines.append(line3)
+    # Line 3: Session (ultra short with sparkline + utilization%)
+    if ctx['show_line3']:
+        if ctx['session_duration'] or ctx.get('api_session_range'):
+            if ctx['burn_timeline']:
+                sparkline = create_sparkline(ctx['burn_timeline'], width=8, current_pos=ctx.get('burn_current_pos'), future_style="bar")
+                line3 = f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} {sparkline} "
+            else:
+                line3 = f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} {get_progress_bar(ctx['block_progress'], width=8)} "
+            if ctx.get('five_hour_utilization') is not None:
+                util = int(ctx['five_hour_utilization'])
+                util_color = _get_utilization_color(util)
+                line3 += f"{util_color}[{util}%]{Colors.RESET}"
+            if ctx.get('api_session_range'):
+                start, end = ctx['api_session_range']
+                line3 += f" {Colors.BRIGHT_GREEN}({start}-{end}){Colors.RESET}"
+            lines.append(line3)
+        else:
+            lines.append(f"{Colors.BRIGHT_CYAN}S:{Colors.RESET} --")
 
-    # Line 4: Burn (ultra short)
-    if ctx['show_line4'] and ctx['burn_timeline']:
-        sparkline = create_sparkline(ctx['burn_timeline'], width=8)
-        tokens_display = format_token_count_short(ctx['block_tokens'])
-        line4 = f"{Colors.BRIGHT_CYAN}B:{Colors.RESET} {sparkline} {Colors.BRIGHT_WHITE}{tokens_display}{Colors.RESET}"
-        lines.append(line4)
+    # Line 4: Weekly (ultra short with remaining time)
+    if ctx['show_line4']:
+        if ctx.get('weekly_line'):
+            rl = ctx.get('ratelimit_data')
+            if rl and rl.get('seven_day'):
+                seven_day = rl.get('seven_day') or {}
+                util = seven_day.get('utilization', 0)
+                util_color = _get_utilization_color(util)
+                wt = ctx.get('weekly_timeline')
+                if wt and any(v > 0 for v in wt):
+                    spark = create_sparkline(wt, width=8, current_pos=ctx.get('weekly_current_pos'))
+                    line4 = f"{Colors.BRIGHT_CYAN}W:{Colors.RESET} {spark} {util_color}[{int(util)}%]{Colors.RESET}"
+                else:
+                    line4 = f"{Colors.BRIGHT_CYAN}W:{Colors.RESET} {get_progress_bar(util, width=8)} {util_color}[{int(util)}%]{Colors.RESET}"
+                # Add remaining time (e.g. "6d10h07m")
+                resets_at_str = seven_day.get('resets_at')
+                if resets_at_str:
+                    try:
+                        resets_at = datetime.fromisoformat(resets_at_str)
+                        remaining_s = max(0, (resets_at - datetime.now(timezone.utc)).total_seconds())
+                        if remaining_s < 3600:
+                            line4 += f" {Colors.BRIGHT_WHITE}{int(remaining_s / 60)}m{Colors.RESET}"
+                        elif remaining_s < 86400:
+                            h = int(remaining_s / 3600)
+                            m = int((remaining_s % 3600) / 60)
+                            line4 += f" {Colors.BRIGHT_WHITE}{h}h{m:02d}m{Colors.RESET}"
+                        else:
+                            d = int(remaining_s / 86400)
+                            h = int((remaining_s % 86400) / 3600)
+                            m = int((remaining_s % 3600) / 60)
+                            line4 += f" {Colors.BRIGHT_WHITE}{d}d{h}h{m:02d}m{Colors.RESET}"
+                    except (ValueError, TypeError):
+                        pass
+                lines.append(line4)
+            else:
+                lines.append(ctx['weekly_line'])
+        else:
+            lines.append(f"{Colors.BRIGHT_CYAN}W:{Colors.RESET} --")
 
     return lines
 
@@ -2176,10 +2471,16 @@ def format_output_minimal(ctx, terminal_width):
     """
     percentage = ctx['percentage']
     compact_display = format_token_count_short(ctx['compact_tokens'])
-    threshold_display = format_token_count_short(ctx['compaction_threshold'])
+    denom = ctx['context_size']
+    threshold_display = format_token_count_short(denom)
     percentage_color = get_percentage_color(percentage)
 
     parts = []
+    if ctx.get('exceeds_200k'):
+        if ctx.get('context_size', 200000) > 200000:
+            parts.append(f"{Colors.BG_YELLOW}PRM{Colors.RESET}")
+        else:
+            parts.append(f"{Colors.BG_RED}{Colors.BRIGHT_WHITE}>200K{Colors.RESET}")
     parts.append(f"{percentage_color}Cpt{percentage}%{Colors.RESET}")
     parts.append(f"{Colors.BRIGHT_WHITE}{compact_display}/{threshold_display}{Colors.RESET}")
 
@@ -2193,15 +2494,68 @@ def format_output_minimal(ctx, terminal_width):
 
     return [line]
 
+
+def do_setup():
+    """Configure Claude Code settings.json to use PATH-based ccsl command."""
+    claude_dir = Path.home() / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings_path = claude_dir / "settings.json"
+
+    statusline_config = {"type": "command", "command": "ccsl", "padding": 0}
+
+    settings = {}
+    if settings_path.exists():
+        try:
+            with open(settings_path, encoding='utf-8') as f:
+                settings = json.load(f)
+        except json.JSONDecodeError:
+            shutil.copy2(settings_path, settings_path.with_suffix('.json.backup'))
+            settings = {}
+
+    settings['statusLine'] = statusline_config
+    with open(settings_path, 'w', encoding='utf-8') as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
+
+    print(f"Settings updated: {settings_path}")
+
+    # Warn about old file-based install (don't rename - other CC sessions may reference it)
+    old_script = claude_dir / "statusline.py"
+    if old_script.exists():
+        print(f"Note: {old_script} still exists (safe to remove after all CC sessions restart)")
+
+    # Clean up auto-update artifacts
+    for name in ['.statusline_update.json', '.statusline_update_lock.json',
+                 '.statusline_no_update', 'statusline.py.backup']:
+        p = claude_dir / name
+        if p.exists():
+            p.unlink()
+
+    print(f"\nccsl {__version__} configured successfully.")
+    print("Restart Claude Code to see the status line.")
+    print("Test: echo '{\"session_id\":\"test\"}' | ccsl --show all")
+
+
 def main():
+    # Force line-buffered stdout to prevent partial output when piped to Claude Code
+    # Without this, Python uses block buffering for pipes, causing intermittent display issues
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except AttributeError:
+        pass  # Python < 3.7
+
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Claude Code statusline with configurable output', add_help=False)
     parser.add_argument('--show', type=str, help='Lines to show: 1,2,3,4 or all (default: use config settings)')
     parser.add_argument('--schedule', action='store_true', help='Show next calendar event (requires gog command)')
+    parser.add_argument('--update', action='store_true', help='Check for updates now')
+    parser.add_argument('--self-update', action='store_true', dest='self_update', help=argparse.SUPPRESS)
+    parser.add_argument('--rollback', action='store_true', help='Rollback to previous version')
+    parser.add_argument('--setup', action='store_true', help='Configure Claude Code to use this statusline')
+    parser.add_argument('--version', action='store_true', help='Show version')
     parser.add_argument('--help', action='store_true', help='Show help')
 
     # Initialize args with default values first
-    args = argparse.Namespace(show=None, schedule=False, help=False)
+    args = argparse.Namespace(show=None, schedule=False, update=False, self_update=False, rollback=False, setup=False, version=False, help=False)
 
     # Parse arguments, but don't exit on failure (for stdin compatibility)
     try:
@@ -2210,23 +2564,48 @@ def main():
         # Keep the default args initialized above
         pass
     
+    # Handle version
+    if args.version:
+        print(f"ccsl {__version__}")
+        return
+
     # Handle help
     if args.help:
-        print("statusline.py - Claude Code Status Line")
+        print(f"ccsl {__version__} - Claude Code Status Line")
         print("Usage:")
-        print("  echo '{\"session_id\":\"...\"}' | statusline.py")
-        print("  echo '{\"session_id\":\"...\"}' | statusline.py --show 1,2")
-        print("  echo '{\"session_id\":\"...\"}' | statusline.py --show simple")
-        print("  echo '{\"session_id\":\"...\"}' | statusline.py --show all")
+        print("  echo '{\"session_id\":\"...\"}' | ccsl")
+        print("  echo '{\"session_id\":\"...\"}' | ccsl --show 1,2")
+        print("  echo '{\"session_id\":\"...\"}' | ccsl --show simple")
+        print("  echo '{\"session_id\":\"...\"}' | ccsl --show all")
         print()
         print("Options:")
         print("  --show 1,2,3,4    Show specific lines (comma-separated)")
         print("  --show simple     Show compact and session lines (2,3)")
         print("  --show all        Show all lines")
         print("  --schedule        Show next calendar event (swaps with Line 1)")
+        print("  --setup           Configure Claude Code settings.json")
+        print("  --update          Check for updates now")
+        print("  --rollback        Rollback to previous version")
+        print("  --version         Show version")
         print("  --help            Show this help")
         return
-    
+
+    # Handle setup (early exit, no stdin needed)
+    if args.setup:
+        do_setup()
+        return
+
+    # Handle auto-update commands (early exit, no stdin needed)
+    if args.self_update:
+        do_self_update()
+        return
+    if args.update:
+        do_update_foreground()
+        return
+    if args.rollback:
+        do_rollback()
+        return
+
     # Override display settings based on --show argument
     global SHOW_LINE1, SHOW_LINE2, SHOW_LINE3, SHOW_LINE4
     if args.show:
@@ -2249,8 +2628,8 @@ def main():
                 print("Error: Invalid --show format. Use: 1,2,3,4, simple, or all", file=sys.stderr)
                 return
 
-    # Auto-detect Agent Teams teammate
-    agent_name = os.environ.get('CLAUDE_CODE_AGENT_NAME') if not args.show else None
+    # Agent name: resolved after JSON parse (API field > env var)
+    agent_name = None
 
     try:
         # Read JSON from stdin
@@ -2276,6 +2655,17 @@ def main():
         api_lines_added = api_cost.get('total_lines_added', 0)
         api_lines_removed = api_cost.get('total_lines_removed', 0)
 
+        # Session duration from API (fallback when block_stats unavailable)
+        api_total_duration_ms = api_cost.get('total_duration_ms')
+
+        # 200K token exceeded flag
+        api_exceeds_200k = data.get('exceeds_200k_tokens', False)
+
+        # Current usage cache details (fallback for cache ratio)
+        api_current_usage = api_context.get('current_usage') or {}
+        api_current_cache_creation = api_current_usage.get('cache_creation_input_tokens', 0)
+        api_current_cache_read = api_current_usage.get('cache_read_input_tokens', 0)
+
         # Context window percentage (v2.1.6+ feature)
         # These are pre-calculated by Claude Code and more accurate than manual calculation
         api_used_percentage = api_context.get('used_percentage')  # v2.1.6+
@@ -2286,16 +2676,15 @@ def main():
 
         # Extract basic values
         model = data.get('model', {}).get('display_name', 'Unknown')
+        model_id = data.get('model', {}).get('id', '')
 
         workspace = data.get('workspace', {})
-        # Show full path with parent directories (with ~ for home)
-        full_path = workspace.get('current_dir', data.get('cwd', '.'))
-        home_dir = str(Path.home())
-        if full_path.startswith(home_dir):
-            current_dir = '~' + full_path[len(home_dir):]
-        else:
-            current_dir = full_path
+        current_dir = os.path.basename(workspace.get('current_dir', data.get('cwd', '.')))
         session_id = data.get('session_id') or data.get('sessionId')
+
+        # Agent name: API field > env var > None
+        if not args.show:
+            agent_name = data.get('agent', {}).get('name') or os.environ.get('CLAUDE_CODE_AGENT_NAME')
         
         # Get git info
         git_branch, modified_files, untracked_files = get_git_info(
@@ -2312,39 +2701,28 @@ def main():
         cache_creation = 0
         cache_read = 0
         
-        # 5時間ブロック検出システム
+        # Pre-fetch ratelimit data for accurate 5-hour window alignment
+        # This must happen BEFORE _get_cached_block_data() so we can pass
+        # the API-derived window start time for precise message filtering
+        ratelimit_data = None
+        api_block_start_utc = None
+        try:
+            ratelimit_data = get_ratelimit_info() if SHOW_LINE4 or SHOW_LINE3 else None
+            if ratelimit_data and (ratelimit_data.get('five_hour') or {}).get('resets_at'):
+                five_hour = ratelimit_data.get('five_hour') or {}
+                resets_at = datetime.fromisoformat(five_hour['resets_at'])
+                api_start = resets_at - timedelta(hours=5)
+                api_block_start_utc = api_start.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception as e:
+            print(f"[ccsl] ratelimit pre-fetch error: {e}", file=sys.stderr)
+
+        # 5時間ブロック検出システム (cached: 30s TTL)
         block_stats = None
         current_block = None  # 初期化して変数スコープ問題を回避
         if session_id:
             try:
-                # 全メッセージを時系列で読み込み
-                all_messages = load_all_messages_chronologically()
-                
-                # 5時間ブロックを検出
-                try:
-                    blocks = detect_five_hour_blocks(all_messages)
-                except Exception:
-                    blocks = []
-                
-                # 現在のセッションが含まれるブロックを特定
-                current_block = find_current_session_block(blocks, session_id)
-                
-                if current_block:
-                    # ブロック全体の統計を計算
-                    try:
-                        block_stats = calculate_block_statistics_with_deduplication(current_block, session_id)
-                    except Exception:
-                        block_stats = None
-                elif blocks:
-                    # セッションが見つからない場合は最新のアクティブブロックを使用
-                    active_blocks = [b for b in blocks if b.get('is_active', False)]
-                    if active_blocks:
-                        current_block = active_blocks[-1]  # 最新のアクティブブロック
-                        try:
-                            block_stats = calculate_block_statistics_with_deduplication(current_block, session_id)
-                        except Exception:
-                            block_stats = None
-                
+                block_stats, current_block = _get_cached_block_data(session_id, api_block_start_utc)
+
                 # 統計データを設定 - Compact用は現在セッションのみ
                 # Compact line用: 現在セッションのトークンのみ（block_statsの有無に関わらず計算）
                 # transcript_pathが提供されていればそれを使用、なければsession_idから探す
@@ -2382,7 +2760,7 @@ def main():
                         output_tokens = 0
                         cache_creation = 0
                         cache_read = 0
-            except Exception as e:
+            except Exception:
 
                 # フォールバック: 従来の単一ファイル方式
                 # transcript_pathが提供されていればそれを使用、なければsession_idから探す
@@ -2401,12 +2779,16 @@ def main():
         compact_tokens = total_tokens
         if api_used_percentage is not None:
             # Use Claude Code's pre-calculated percentage (more accurate)
+            # This is relative to full context_window_size (200K or 1M)
             percentage = min(100, round(api_used_percentage))
+            percentage_of_full_context = True
         else:
             # Fallback: manual calculation for older Claude Code versions
             # NOTE: API tokens (total_input/output_tokens) are CUMULATIVE session totals,
             # NOT current context window usage. Must use transcript-calculated tokens.
-            percentage = min(100, round((compact_tokens / compaction_threshold) * 100))
+            # Use api_context_size (200K) as denominator to match api_used_percentage path
+            percentage = min(100, round((compact_tokens / api_context_size) * 100))
+            percentage_of_full_context = False
         
         # Get additional info
         active_files = len(workspace.get('active_files', []))
@@ -2418,8 +2800,11 @@ def main():
         if block_stats:
             # ブロック統計から時間情報を取得
             duration_seconds = block_stats['duration_seconds']
-            
-            # フォーマット済み文字列
+        elif api_total_duration_ms is not None:
+            # Fallback: API-provided total session duration
+            duration_seconds = api_total_duration_ms / 1000.0
+
+        if duration_seconds is not None:
             if duration_seconds < 60:
                 session_duration = f"{int(duration_seconds)}s"
             elif duration_seconds < 3600:
@@ -2434,7 +2819,7 @@ def main():
             session_cost = api_total_cost
         else:
             # Fallback to manual calculation if API cost unavailable
-            session_cost = calculate_cost(input_tokens, output_tokens, cache_creation, cache_read, model)
+            session_cost = calculate_cost(input_tokens, output_tokens, cache_creation, cache_read, model, model_id)
         
         # Format displays - use API tokens for Compact line
         token_display = format_token_count(compact_tokens)
@@ -2444,8 +2829,8 @@ def main():
         # RESPONSIVE DISPLAY MODE SYSTEM
         # ========================================
 
-        # Get terminal width and determine display mode
-        terminal_width = get_terminal_width()
+        # Get terminal size (1 call, width and height together)
+        terminal_width, terminal_height = get_terminal_size()
         display_mode = get_display_mode(terminal_width)
 
         # 環境変数で強制モード指定（テスト/デバッグ用）
@@ -2461,11 +2846,13 @@ def main():
         # Calculate common values
         total_messages = user_messages + assistant_messages
 
-        # Calculate cache ratio
+        # Calculate cache ratio (with API current_usage fallback)
         cache_ratio = 0
-        if cache_read > 0 or cache_creation > 0:
-            all_tokens = compact_tokens + cache_read + cache_creation
-            cache_ratio = (cache_read / all_tokens * 100) if all_tokens > 0 else 0
+        eff_cache_read = cache_read if cache_read > 0 else api_current_cache_read
+        eff_cache_creation = cache_creation if cache_creation > 0 else api_current_cache_creation
+        if eff_cache_read > 0 or eff_cache_creation > 0:
+            all_tokens = compact_tokens + eff_cache_read + eff_cache_creation
+            cache_ratio = (eff_cache_read / all_tokens * 100) if all_tokens > 0 else 0
 
         # Calculate block progress
         block_progress = 0
@@ -2491,11 +2878,53 @@ def main():
             except Exception:
                 session_time_info = f"{Colors.BRIGHT_WHITE}{current_time}{Colors.RESET}"
 
+        # ratelimit_data and api_block_start_utc already fetched above (before block data)
+        # Compute downstream values that depend on ratelimit_data
+        api_session_range = None
+        weekly_line = None
+        try:
+            api_session_range = get_api_session_time_range(ratelimit_data) if ratelimit_data else None
+            weekly_timeline = generate_weekly_timeline(ratelimit_data) if SHOW_LINE4 and ratelimit_data else None
+            weekly_line = get_weekly_line(ratelimit_data, weekly_timeline) if SHOW_LINE4 and ratelimit_data else None
+        except Exception as e:
+            print(f"[ccsl] weekly generation error: {e}", file=sys.stderr)
+
+        # Compute burn_current_pos from five_hour.resets_at (same pattern as Weekly)
+        burn_current_pos = None
+        if ratelimit_data:
+            five_hour = ratelimit_data.get('five_hour')
+            if five_hour and five_hour.get('resets_at'):
+                try:
+                    resets_at = datetime.fromisoformat(five_hour['resets_at'])
+                    now = datetime.now(timezone.utc)
+                    block_start = resets_at - timedelta(hours=5)
+                    elapsed = (now - block_start).total_seconds()
+                    total = 5 * 3600
+                    burn_current_pos = max(0.0, min(1.0, elapsed / total))
+                except (ValueError, TypeError):
+                    pass
+
+        # Compute weekly_current_pos from seven_day.resets_at
+        weekly_current_pos = None
+        if ratelimit_data:
+            seven_day = ratelimit_data.get('seven_day')
+            if seven_day and seven_day.get('resets_at'):
+                try:
+                    resets_at = datetime.fromisoformat(seven_day['resets_at'])
+                    now = datetime.now(timezone.utc)
+                    week_start = resets_at - timedelta(days=7)
+                    elapsed = (now - week_start).total_seconds()
+                    total = 7 * 86400
+                    weekly_current_pos = max(0.0, min(1.0, elapsed / total))
+                except (ValueError, TypeError):
+                    pass
+
         # Generate burn line and timeline for context
+        # burn_timeline is needed by Line 3 (Session sparkline)
         burn_line = ""
         burn_timeline = []
         block_tokens = 0
-        if SHOW_LINE4 and block_stats:
+        if (SHOW_LINE3 or SHOW_LINE4) and block_stats:
             session_data = {
                 'total_tokens': block_stats['total_tokens'],
                 'duration_seconds': duration_seconds if duration_seconds and duration_seconds > 0 else 1,
@@ -2503,8 +2932,8 @@ def main():
                 'efficiency_ratio': block_stats.get('efficiency_ratio', 0),
                 'current_cost': session_cost
             }
-            burn_line = get_burn_line(session_data, session_id, block_stats, current_block)
-            burn_timeline = generate_real_burn_timeline(block_stats, current_block)
+            burn_line = get_burn_line(session_data, session_id, block_stats, current_block, burn_current_pos)
+            burn_timeline = generate_real_burn_timeline(block_stats, current_block, api_block_start_utc)
             block_tokens = block_stats.get('total_tokens', 0)
 
         # Build context dictionary for formatters
@@ -2530,20 +2959,31 @@ def main():
             'session_time_info': session_time_info,
             'burn_line': burn_line,
             'burn_timeline': burn_timeline,
+            'burn_current_pos': burn_current_pos,
             'block_tokens': block_tokens,
+            'weekly_line': weekly_line,
+            'weekly_timeline': weekly_timeline if SHOW_LINE4 else None,
+            'weekly_current_pos': weekly_current_pos,
+            'ratelimit_data': ratelimit_data,
+            'api_session_range': api_session_range,
+            'five_hour_utilization': (ratelimit_data.get('five_hour') or {}).get('utilization') if ratelimit_data else None,
+            'session_duration_seconds': duration_seconds,
             'show_line1': SHOW_LINE1,
             'show_line2': SHOW_LINE2,
             'show_line3': SHOW_LINE3,
             'show_line4': SHOW_LINE4,
             'show_schedule': SHOW_SCHEDULE or args.schedule,
+            'exceeds_200k': api_exceeds_200k,
+            'context_size': api_context_size,
+            'percentage_of_full_context': percentage_of_full_context,
         }
 
-        # Select formatter based on display mode and terminal height
-        terminal_height = get_terminal_height()
+        # Select formatter based on display mode and terminal height (with hysteresis)
+        height_mode = get_height_mode(terminal_height)
 
         if agent_name:
             lines = [format_agent_line(ctx, agent_name)]
-        elif not args.show and terminal_height <= 8:
+        elif not args.show and height_mode == 'minimal':
             # Short terminal: 1-line minimal mode
             lines = format_output_minimal(ctx, terminal_width)
         elif display_mode == 'full':
@@ -2560,18 +3000,28 @@ def main():
             warning = f"{Colors.BRIGHT_RED}\u26a0\ufe0f DEAD: {dead_names}{Colors.RESET}"
             lines.insert(0, warning)
 
-        # Output lines
-        for line in lines:
-            print(f"\033[0m\033[1;97m{line}\033[0m")
-        
+        # Output lines (flush=True to avoid partial reads when piped to Claude Code)
+        output = "\n".join(f"\033[0m\033[1;97m{line}\033[0m" for line in lines)
+        sys.stdout.write(output + "\n")
+        sys.stdout.flush()
+
+        # Background auto-update check (fire-and-forget, never breaks statusline)
+        try:
+            maybe_check_update()
+        except Exception:
+            pass
+
     except Exception as e:
         # Fallback status line on error
-        print(f"{Colors.BRIGHT_RED}[Error]{Colors.RESET} . | 0 | 0%")
-        print(f"{Colors.LIGHT_GRAY}Check ~/.claude/statusline-error.log{Colors.RESET}")
+        sys.stdout.write(f"{Colors.BRIGHT_RED}[Error]{Colors.RESET} . | 0 | 0%\n")
+        sys.stdout.write(f"{Colors.LIGHT_GRAY}Check ~/.claude/statusline-error.log{Colors.RESET}\n")
+        sys.stdout.flush()
         
-        # Debug logging
+        # Debug logging with traceback
+        import traceback
         with open(Path.home() / '.claude' / 'statusline-error.log', 'a') as f:
             f.write(f"{datetime.now()}: {e}\n")
+            f.write(traceback.format_exc() + "\n")
             f.write(f"Input data: {locals().get('input_data', 'No input')}\n\n")
 
 def calculate_tokens_since_time(start_time, session_id):
@@ -2670,7 +3120,1271 @@ def calculate_tokens_since_time(start_time, session_id):
 
 # REMOVED: get_session_cumulative_usage() - unused function (5th line display not implemented)
 
-def get_burn_line(current_session_data=None, session_id=None, block_stats=None, current_block=None):
+# ============================================
+# Ratelimit cache management (OAuth API)
+# ============================================
+
+def _get_block_stats_cache_file():
+    """Get block stats cache file path (lazy initialization)"""
+    global BLOCK_STATS_CACHE_FILE
+    if BLOCK_STATS_CACHE_FILE is None:
+        BLOCK_STATS_CACHE_FILE = Path.home() / '.claude' / '.block_stats_cache.json'
+    return BLOCK_STATS_CACHE_FILE
+
+def _get_transcript_stats_cache_file():
+    """Get transcript stats cache file path (lazy initialization)"""
+    global TRANSCRIPT_STATS_CACHE_FILE
+    if TRANSCRIPT_STATS_CACHE_FILE is None:
+        TRANSCRIPT_STATS_CACHE_FILE = Path.home() / '.claude' / '.transcript_stats_cache.json'
+    return TRANSCRIPT_STATS_CACHE_FILE
+
+def _serialize_datetime(dt):
+    """Convert datetime to ISO string for JSON cache serialization."""
+    if dt is None:
+        return None
+    if hasattr(dt, 'isoformat'):
+        return dt.isoformat()
+    return str(dt)
+
+def _deserialize_datetime(s):
+    """Convert ISO string back to datetime object."""
+    if s is None:
+        return None
+    if isinstance(s, str):
+        return datetime.fromisoformat(s)
+    return s
+
+def _get_transcript_fingerprint(hours_limit=6):
+    """Get per-file fingerprint of transcript files (stat() only, no parsing).
+
+    Returns: (fingerprint_dict, file_list)
+      fingerprint_dict: {str(path): [mtime_ns, size], ...}
+      file_list: [Path, ...] for reuse by load_all_messages_chronologically
+    """
+    files = find_all_transcript_files(hours_limit=hours_limit)
+    if not files:
+        return {}, []
+    fp = {}
+    for f in files:
+        try:
+            st = f.stat()
+            fp[str(f)] = [st.st_mtime_ns, st.st_size]
+        except OSError:
+            continue
+    return fp, files
+
+def _get_cached_block_data(session_id, api_block_start_utc=None):
+    """Get block_stats and current_block from 30s file cache or by computing.
+
+    On cache hit:  returns (block_stats, current_block) from disk (<1ms).
+    On cache miss: runs full JSONL scan, saves result, returns data.
+    When api_block_start_utc is provided, uses API-derived 5-hour window
+    instead of local floor_to_hour() detection for accurate message coverage.
+    Returns (None, None) on error.
+    """
+    # --- transcript fingerprint (stat() only, <1ms) ---
+    transcript_fp, transcript_files = _get_transcript_fingerprint()
+
+    # --- cache hit path ---
+    cache_file = _get_block_stats_cache_file()
+    current_api_start_str = _serialize_datetime(api_block_start_utc) if api_block_start_utc else None
+    try:
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                cached = json.load(f)
+            cached_api_start = cached.get('api_block_start_utc')
+            cached_fp = cached.get('transcript_fingerprint')
+            if (cached_fp is not None
+                    and time.time() - cached.get('timestamp', 0) < BLOCK_STATS_CACHE_TTL
+                    and cached_api_start == current_api_start_str
+                    and cached_fp == transcript_fp):
+                # Deserialize block_stats
+                bs = cached.get('block_stats')
+                if bs:
+                    bs['start_time'] = _deserialize_datetime(bs.get('start_time'))
+                # Deserialize current_block
+                cb = cached.get('current_block')
+                if cb:
+                    cb['start_time'] = _deserialize_datetime(cb.get('start_time'))
+                    cb['end_time'] = _deserialize_datetime(cb.get('end_time'))
+                    cb['actual_end_time'] = _deserialize_datetime(cb.get('actual_end_time'))
+                    for msg in cb.get('messages', []):
+                        msg['timestamp'] = _deserialize_datetime(msg.get('timestamp'))
+                return bs, cb
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    # --- cache miss path ---
+    block_stats = None
+    current_block = None
+    try:
+        all_messages = load_all_messages_chronologically(transcript_files=transcript_files)
+
+        if api_block_start_utc is not None:
+            # Use API-derived window for precise message filtering (bypasses floor_to_hour drift)
+            api_block_end_utc = api_block_start_utc + timedelta(hours=5)
+            window_messages = []
+            for msg in all_messages:
+                msg_time = msg['timestamp']
+                if hasattr(msg_time, 'tzinfo') and msg_time.tzinfo:
+                    msg_time = msg_time.astimezone(timezone.utc).replace(tzinfo=None)
+                if api_block_start_utc <= msg_time < api_block_end_utc:
+                    window_messages.append(msg)
+
+            if window_messages:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                current_block = create_session_block(
+                    api_block_start_utc, window_messages, now,
+                    5 * 60 * 60 * 1000
+                )
+                try:
+                    block_stats = calculate_block_statistics_with_deduplication(current_block, session_id)
+                except Exception:
+                    block_stats = None
+        else:
+            # Fallback: local block detection when API data is unavailable
+            try:
+                blocks = detect_five_hour_blocks(all_messages)
+            except Exception:
+                blocks = []
+            current_block = find_current_session_block(blocks, session_id)
+            if current_block:
+                try:
+                    block_stats = calculate_block_statistics_with_deduplication(current_block, session_id)
+                except Exception:
+                    block_stats = None
+            elif blocks:
+                active_blocks = [b for b in blocks if b.get('is_active', False)]
+                if active_blocks:
+                    current_block = active_blocks[-1]
+                    try:
+                        block_stats = calculate_block_statistics_with_deduplication(current_block, session_id)
+                    except Exception:
+                        block_stats = None
+    except Exception:
+        return None, None
+
+    # --- write cache ---
+    if block_stats is not None or current_block is not None:
+        try:
+            cache_data = {
+                'timestamp': time.time(),
+                'api_block_start_utc': current_api_start_str,
+                'transcript_fingerprint': transcript_fp,
+            }
+            if block_stats:
+                bs_copy = dict(block_stats)
+                bs_copy['start_time'] = _serialize_datetime(bs_copy.get('start_time'))
+                cache_data['block_stats'] = bs_copy
+            if current_block:
+                cb_ser = {
+                    'start_time': _serialize_datetime(current_block.get('start_time')),
+                    'end_time': _serialize_datetime(current_block.get('end_time')),
+                    'actual_end_time': _serialize_datetime(current_block.get('actual_end_time')),
+                    'duration_seconds': current_block.get('duration_seconds'),
+                    'is_active': current_block.get('is_active'),
+                    'messages': [],
+                }
+                for msg in current_block.get('messages', []):
+                    cb_ser['messages'].append({
+                        'timestamp': _serialize_datetime(msg.get('timestamp')),
+                        'session_id': msg.get('session_id'),
+                        'type': msg.get('type'),
+                        'usage': msg.get('usage'),
+                        'uuid': msg.get('uuid'),
+                        'requestId': msg.get('requestId'),
+                    })
+                cache_data['current_block'] = cb_ser
+            tmp = cache_file.with_suffix('.tmp')
+            with open(tmp, 'w') as f:
+                json.dump(cache_data, f)
+            tmp.rename(cache_file)
+        except (OSError, TypeError):
+            pass
+
+    return block_stats, current_block
+
+def _load_transcript_stats_cache(file_path):
+    """Load transcript stats from cache if valid (TTL + path + mtime match).
+    Returns cached data dict or None on miss."""
+    cache_file = _get_transcript_stats_cache_file()
+    try:
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                cached = json.load(f)
+            if (time.time() - cached.get('timestamp', 0) < TRANSCRIPT_STATS_CACHE_TTL
+                    and cached.get('file_path') == str(file_path)
+                    and cached.get('file_mtime') == file_path.stat().st_mtime):
+                return cached
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+def _save_transcript_stats_cache(file_path, stats_tuple):
+    """Write transcript stats cache atomically."""
+    cache_file = _get_transcript_stats_cache_file()
+    (total_tokens, message_count, error_count, user_messages, assistant_messages,
+     input_tokens, output_tokens, cache_creation, cache_read) = stats_tuple
+    try:
+        tmp = cache_file.with_suffix('.tmp')
+        with open(tmp, 'w') as f:
+            json.dump({
+                'timestamp': time.time(),
+                'file_path': str(file_path),
+                'file_mtime': file_path.stat().st_mtime,
+                'total_tokens': total_tokens,
+                'message_count': message_count,
+                'error_count': error_count,
+                'user_messages': user_messages,
+                'assistant_messages': assistant_messages,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'cache_creation': cache_creation,
+                'cache_read': cache_read,
+            }, f)
+        tmp.rename(cache_file)
+    except OSError:
+        pass
+
+def get_ratelimit_cache_file():
+    """Get rate limit cache file path (lazy initialization)"""
+    global RATELIMIT_CACHE_FILE
+    if RATELIMIT_CACHE_FILE is None:
+        RATELIMIT_CACHE_FILE = Path.home() / '.claude' / '.ratelimit_cache.json'
+    return RATELIMIT_CACHE_FILE
+
+def get_ratelimit_lock_file():
+    """Get rate limit lock file path (lazy initialization)"""
+    global RATELIMIT_LOCK_FILE
+    if RATELIMIT_LOCK_FILE is None:
+        RATELIMIT_LOCK_FILE = Path.home() / '.claude' / '.ratelimit_lock.json'
+    return RATELIMIT_LOCK_FILE
+
+def load_ratelimit_cache():
+    """Load ratelimit cache from disk."""
+    cache_file = get_ratelimit_cache_file()
+    try:
+        if cache_file.exists():
+            with open(cache_file) as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError, OSError):
+        pass
+    return None
+
+def _acquire_pid_lock():
+    """Acquire PID lock for probe mutual exclusion."""
+    lock_file = get_ratelimit_lock_file()
+    try:
+        if lock_file.exists():
+            with open(lock_file) as f:
+                lock_data = json.load(f)
+            pid = lock_data.get('pid')
+            start_time_val = lock_data.get('start_time', 0)
+            # Check if process is still alive and lock is not stale (60s)
+            if pid and time.time() - start_time_val < 60:
+                try:
+                    os.kill(pid, 0)
+                    return False  # Process alive, lock held
+                except OSError:
+                    pass  # Process dead, steal lock
+    except (json.JSONDecodeError, IOError, OSError):
+        pass
+    return True
+
+def _write_pid_lock(pid):
+    """Write PID to lock file."""
+    lock_file = get_ratelimit_lock_file()
+    try:
+        with open(lock_file, 'w') as f:
+            json.dump({'pid': pid, 'start_time': time.time()}, f)
+    except (IOError, OSError):
+        pass
+
+def _release_pid_lock():
+    """Release PID lock file."""
+    lock_file = get_ratelimit_lock_file()
+    try:
+        lock_file.unlink()
+    except (FileNotFoundError, OSError):
+        pass
+
+# ============================================
+# OAuth token retrieval (cross-platform)
+# ============================================
+
+def _parse_keychain_content(content):
+    """Parse keychain content: JSON format or raw token."""
+    if content.startswith('{'):
+        try:
+            parsed = json.loads(content)
+            token = parsed.get('claudeAiOauth', {}).get('accessToken')
+            if token and token.startswith('sk-ant-oat'):
+                return token
+        except json.JSONDecodeError:
+            pass
+    if content.startswith('sk-ant-oat'):
+        return content
+    return None
+
+def _get_oauth_token_macos():
+    """macOS: Extract OAuth token from Keychain, including hash-suffixed service names."""
+    try:
+        result = subprocess.run(
+            ['security', 'dump-keychain'],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=5
+        )
+        service_names = []
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if 'Claude Code-credentials' in line:
+                    m = re.search(r'"(Claude Code-credentials[^"]*)"', line)
+                    if m:
+                        service_names.append(m.group(1))
+        service_names = sorted(set(service_names), key=len, reverse=True)
+        if not service_names:
+            service_names = ['Claude Code-credentials']
+        for name in service_names:
+            try:
+                result = subprocess.run(
+                    ['security', 'find-generic-password', '-s', name, '-w'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    token = _parse_keychain_content(result.stdout.strip())
+                    if token:
+                        return token
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+def _get_oauth_token_linux():
+    """Linux: Extract OAuth token from GNOME Keyring via secret-tool."""
+    try:
+        result = subprocess.run(
+            ['secret-tool', 'lookup', 'service', 'Claude Code'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            token = _parse_keychain_content(result.stdout.strip())
+            if token:
+                return token
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+def _get_oauth_token_from_files():
+    """Credential files fallback (all platforms)."""
+    home = Path.home()
+    paths = [
+        home / '.claude' / '.credentials.json',
+        home / '.claude' / 'credentials.json',
+        home / '.config' / 'claude-code' / 'credentials.json',
+    ]
+    if os.name == 'nt':
+        for env_var in ('APPDATA', 'LOCALAPPDATA'):
+            d = os.environ.get(env_var)
+            if d:
+                paths.append(Path(d) / 'Claude Code' / 'credentials.json')
+    for p in paths:
+        try:
+            if not p.exists():
+                continue
+            with open(p) as f:
+                creds = json.load(f)
+            token = creds.get('claudeAiOauth', {}).get('accessToken')
+            if token and token.startswith('sk-ant-oat'):
+                return token
+            for key in ('oauth_token', 'token', 'accessToken'):
+                token = creds.get(key)
+                if token and isinstance(token, str) and token.startswith('sk-ant-oat'):
+                    return token
+        except (json.JSONDecodeError, IOError, OSError):
+            continue
+    return None
+
+def _get_oauth_token():
+    """Extract OAuth access token (cross-platform).
+    Fallback chain: macOS Keychain -> Linux secret-tool -> credential files.
+    """
+    import platform
+    system = platform.system()
+    token = None
+    if system == 'Darwin':
+        token = _get_oauth_token_macos()
+    elif system == 'Linux':
+        token = _get_oauth_token_linux()
+    if token and token.startswith('sk-ant-oat'):
+        return token
+    token = _get_oauth_token_from_files()
+    if token and token.startswith('sk-ant-oat'):
+        return token
+    return None
+
+# ============================================
+# Background probe for OAuth usage API
+# ============================================
+
+def probe_ratelimit_background():
+    """Launch background probe to fetch usage data from Anthropic OAuth API.
+    Cross-platform: macOS Keychain, Linux secret-tool, credential files fallback.
+    """
+    if not _acquire_pid_lock():
+        return
+
+    try:
+        cache_file = str(get_ratelimit_cache_file())
+        lock_file = str(get_ratelimit_lock_file())
+
+        probe_script = f'''
+import json, sys, subprocess, os, time, tempfile, signal, platform, re
+from pathlib import Path
+
+def handler(signum, frame):
+    sys.exit(1)
+
+if hasattr(signal, 'SIGALRM'):
+    signal.signal(signal.SIGALRM, handler)
+    signal.alarm(15)
+else:
+    import threading
+    threading.Timer(15, lambda: os._exit(1)).start()
+
+def parse_keychain_content(content):
+    if content.startswith('{{'):
+        try:
+            parsed = json.loads(content)
+            t = parsed.get('claudeAiOauth', {{}}).get('accessToken')
+            if t and t.startswith('sk-ant-oat'):
+                return t
+        except json.JSONDecodeError:
+            pass
+    if content.startswith('sk-ant-oat'):
+        return content
+    return None
+
+def get_token_macos():
+    try:
+        r = subprocess.run(['security', 'dump-keychain'],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           text=True, timeout=5)
+        names = []
+        if r.returncode == 0:
+            for line in r.stdout.splitlines():
+                if 'Claude Code-credentials' in line:
+                    m = re.search(r'"(Claude Code-credentials[^"]*)"', line)
+                    if m:
+                        names.append(m.group(1))
+        names = sorted(set(names), key=len, reverse=True)
+        if not names:
+            names = ['Claude Code-credentials']
+        for name in names:
+            try:
+                r2 = subprocess.run(
+                    ['security', 'find-generic-password', '-s', name, '-w'],
+                    capture_output=True, text=True, timeout=5)
+                if r2.returncode == 0 and r2.stdout.strip():
+                    t = parse_keychain_content(r2.stdout.strip())
+                    if t:
+                        return t
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+def get_token_linux():
+    try:
+        r = subprocess.run(
+            ['secret-tool', 'lookup', 'service', 'Claude Code'],
+            capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            t = parse_keychain_content(r.stdout.strip())
+            if t:
+                return t
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+def get_token_from_files():
+    home = Path.home()
+    paths = [
+        home / '.claude' / '.credentials.json',
+        home / '.claude' / 'credentials.json',
+        home / '.config' / 'claude-code' / 'credentials.json',
+    ]
+    if os.name == 'nt':
+        for ev in ('APPDATA', 'LOCALAPPDATA'):
+            d = os.environ.get(ev)
+            if d:
+                paths.append(Path(d) / 'Claude Code' / 'credentials.json')
+    for p in paths:
+        try:
+            if not p.exists():
+                continue
+            with open(p) as f:
+                creds = json.load(f)
+            t = creds.get('claudeAiOauth', {{}}).get('accessToken')
+            if t and t.startswith('sk-ant-oat'):
+                return t
+            for key in ('oauth_token', 'token', 'accessToken'):
+                t = creds.get(key)
+                if t and isinstance(t, str) and t.startswith('sk-ant-oat'):
+                    return t
+        except (json.JSONDecodeError, IOError, OSError):
+            continue
+    return None
+
+def get_token():
+    system = platform.system()
+    token = None
+    if system == 'Darwin':
+        token = get_token_macos()
+    elif system == 'Linux':
+        token = get_token_linux()
+    if token and token.startswith('sk-ant-oat'):
+        return token
+    token = get_token_from_files()
+    if token and token.startswith('sk-ant-oat'):
+        return token
+    return None
+
+try:
+    token = get_token()
+    if not token:
+        sys.exit(1)
+
+    result = subprocess.run(
+        ['curl', '-s', '--max-time', '10',
+         '-H', f'Authorization: Bearer {{token}}',
+         '-H', 'anthropic-beta: oauth-2025-04-20',
+         'https://api.anthropic.com/api/oauth/usage'],
+        capture_output=True, text=True, timeout=15
+    )
+
+    if result.returncode != 0 or not result.stdout.strip():
+        sys.exit(1)
+
+    usage_data = json.loads(result.stdout.strip())
+
+    # Validate: API error responses must not overwrite cache
+    if usage_data.get('type') == 'error' or 'seven_day' not in usage_data:
+        sys.exit(1)
+
+    cache = {{"timestamp": time.time(), "data": usage_data}}
+    cache_dir = os.path.dirname("{cache_file}")
+    fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cache, f)
+        os.rename(tmp, "{cache_file}")
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+finally:
+    try:
+        os.unlink("{lock_file}")
+    except (FileNotFoundError, OSError):
+        pass
+'''
+
+        proc = subprocess.Popen(
+            [sys.executable, '-c', probe_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        _write_pid_lock(proc.pid)
+
+    except Exception:
+        _release_pid_lock()
+
+# ============================================
+# Auto-update mechanism
+# ============================================
+
+def get_update_cache_file():
+    """Get auto-update cache file path (lazy initialization)."""
+    global AUTO_UPDATE_CACHE_FILE
+    if AUTO_UPDATE_CACHE_FILE is None:
+        AUTO_UPDATE_CACHE_FILE = Path.home() / '.claude' / '.statusline_update.json'
+    return AUTO_UPDATE_CACHE_FILE
+
+def get_update_lock_file():
+    """Get auto-update lock file path (lazy initialization)."""
+    global AUTO_UPDATE_LOCK_FILE
+    if AUTO_UPDATE_LOCK_FILE is None:
+        AUTO_UPDATE_LOCK_FILE = Path.home() / '.claude' / '.statusline_update_lock.json'
+    return AUTO_UPDATE_LOCK_FILE
+
+def load_update_cache():
+    """Load auto-update cache from disk."""
+    cache_file = get_update_cache_file()
+    try:
+        if cache_file.exists():
+            with open(cache_file) as f:
+                return json.load(f)
+    except (json.JSONDecodeError, IOError, OSError):
+        pass
+    return None
+
+def _save_update_cache(data):
+    """Save auto-update cache to disk."""
+    cache_file = get_update_cache_file()
+    try:
+        import tempfile
+        fd, tmp_path = tempfile.mkstemp(dir=str(cache_file.parent), suffix='.tmp')
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f)
+        Path(tmp_path).rename(cache_file)
+    except (IOError, OSError):
+        pass
+
+def _acquire_update_lock():
+    """Acquire PID lock for update mutual exclusion."""
+    lock_file = get_update_lock_file()
+    try:
+        if lock_file.exists():
+            with open(lock_file) as f:
+                lock_data = json.load(f)
+            pid = lock_data.get('pid')
+            start_time_val = lock_data.get('start_time', 0)
+            if pid and time.time() - start_time_val < 60:
+                try:
+                    os.kill(pid, 0)
+                    return False  # Process alive, lock held
+                except OSError:
+                    pass  # Process dead, steal lock
+    except (json.JSONDecodeError, IOError, OSError):
+        pass
+    return True
+
+def _write_update_lock(pid):
+    """Write PID to update lock file."""
+    lock_file = get_update_lock_file()
+    try:
+        with open(lock_file, 'w') as f:
+            json.dump({'pid': pid, 'start_time': time.time()}, f)
+    except (IOError, OSError):
+        pass
+
+def _release_update_lock():
+    """Release update lock file."""
+    lock_file = get_update_lock_file()
+    try:
+        lock_file.unlink()
+    except (FileNotFoundError, OSError):
+        pass
+
+def _is_update_disabled():
+    """Check if auto-update is disabled via env var or marker file."""
+    if os.environ.get('STATUSLINE_AUTO_UPDATE', '1') == '0':
+        return True
+    no_update_file = Path.home() / '.claude' / '.statusline_no_update'
+    if no_update_file.exists():
+        return True
+    # pip/brew install: not running from ~/.claude/statusline.py
+    script_path = Path(__file__).resolve()
+    legacy_path = (Path.home() / '.claude' / 'statusline.py').resolve()
+    if script_path != legacy_path:
+        return True
+    return False
+
+def maybe_check_update():
+    """Check if an update check is due and spawn background process if so."""
+    if _is_update_disabled():
+        return
+    cache = load_update_cache()
+    if cache and (time.time() - cache.get('last_check', 0)) < AUTO_UPDATE_CHECK_TTL:
+        return  # Still fresh
+    if not _acquire_update_lock():
+        return  # Another process is checking
+    try:
+        target = str(Path.home() / '.claude' / 'statusline.py')
+        proc = subprocess.Popen(
+            [sys.executable, target, '--self-update'],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        _write_update_lock(proc.pid)
+    except Exception:
+        _release_update_lock()
+
+def do_self_update():
+    """Background self-update handler (--self-update).
+    Downloads latest version from GitHub, validates, and replaces if changed.
+    """
+    import hashlib
+    import tempfile
+    log_file = Path.home() / '.claude' / 'statusline-update.log'
+    target = Path.home() / '.claude' / 'statusline.py'
+
+    def log(msg):
+        try:
+            with open(log_file, 'a') as f:
+                f.write(f"{datetime.now().isoformat()}: {msg}\n")
+        except OSError:
+            pass
+
+    try:
+        # Load cache for ETag
+        cache = load_update_cache() or {}
+        etag = cache.get('etag', '')
+
+        # HTTP GET with conditional request
+        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError
+        req = Request(AUTO_UPDATE_URL)
+        if etag:
+            req.add_header('If-None-Match', etag)
+        req.add_header('User-Agent', 'statusline-autoupdate/1.0')
+
+        try:
+            resp = urlopen(req, timeout=10)
+        except HTTPError as e:
+            if e.code == 304:
+                # Not modified - just update timestamp
+                cache['last_check'] = time.time()
+                _save_update_cache(cache)
+                _release_update_lock()
+                return
+            raise
+
+        content = resp.read().decode('utf-8')
+        new_etag = resp.headers.get('ETag', '')
+
+        # Validation
+        if len(content) < 1000:
+            log("SKIP: Downloaded content too small ({} bytes)".format(len(content)))
+            cache['last_check'] = time.time()
+            _save_update_cache(cache)
+            _release_update_lock()
+            return
+
+        lines = content.split('\n', 5)
+        has_shebang = any(line.startswith('#!') and 'python' in line for line in lines[:3])
+        if not has_shebang:
+            log("SKIP: No python shebang found")
+            cache['last_check'] = time.time()
+            _save_update_cache(cache)
+            _release_update_lock()
+            return
+
+        if 'def main()' not in content:
+            log("SKIP: No main() function found")
+            cache['last_check'] = time.time()
+            _save_update_cache(cache)
+            _release_update_lock()
+            return
+
+        # Syntax check
+        try:
+            compile(content, '<update>', 'exec')
+        except SyntaxError as e:
+            log("SKIP: Syntax error in downloaded content: {}".format(e))
+            cache['last_check'] = time.time()
+            _save_update_cache(cache)
+            _release_update_lock()
+            return
+
+        # SHA256 comparison
+        new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        if new_hash == cache.get('content_hash', ''):
+            # Same content, just update cache
+            cache['last_check'] = time.time()
+            cache['etag'] = new_etag
+            _save_update_cache(cache)
+            _release_update_lock()
+            return
+
+        # Also compare against current file
+        try:
+            current_content = target.read_text(encoding='utf-8')
+            current_hash = hashlib.sha256(current_content.encode('utf-8')).hexdigest()
+            if new_hash == current_hash:
+                cache['last_check'] = time.time()
+                cache['etag'] = new_etag
+                cache['content_hash'] = new_hash
+                _save_update_cache(cache)
+                _release_update_lock()
+                return
+        except (IOError, OSError):
+            pass
+
+        # Backup current file
+        backup_path = target.parent / 'statusline.py.backup'
+        try:
+            import shutil
+            shutil.copy2(str(target), str(backup_path))
+        except (IOError, OSError) as e:
+            log("WARNING: Backup failed: {}".format(e))
+
+        # Atomic write: mkstemp -> write -> chmod -> rename
+        fd, tmp_path = tempfile.mkstemp(dir=str(target.parent), suffix='.py.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                f.write(content)
+            os.chmod(tmp_path, 0o755)
+            Path(tmp_path).rename(target)
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+        # Update cache
+        cache['last_check'] = time.time()
+        cache['etag'] = new_etag
+        cache['content_hash'] = new_hash
+        cache['last_update'] = time.time()
+        _save_update_cache(cache)
+
+        log("UPDATED: {} -> hash {}".format(target, new_hash[:12]))
+
+    except Exception as e:
+        try:
+            log("ERROR: {}".format(e))
+        except Exception:
+            pass
+        # Update last_check even on error to avoid rapid retries
+        cache = load_update_cache() or {}
+        cache['last_check'] = time.time()
+        _save_update_cache(cache)
+    finally:
+        _release_update_lock()
+
+def do_update_foreground():
+    """Foreground update handler (--update). Runs synchronously with user feedback."""
+    if _is_update_disabled():
+        print("Auto-update is disabled.")
+        no_update_file = Path.home() / '.claude' / '.statusline_no_update'
+        if no_update_file.exists():
+            print("  Remove ~/.claude/.statusline_no_update to re-enable.")
+        if os.environ.get('STATUSLINE_AUTO_UPDATE', '1') == '0':
+            print("  Unset STATUSLINE_AUTO_UPDATE=0 to re-enable.")
+        return
+
+    import hashlib
+    target = Path.home() / '.claude' / 'statusline.py'
+    cache = load_update_cache() or {}
+    etag = cache.get('etag', '')
+
+    print("Checking for updates...")
+
+    try:
+        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError
+        req = Request(AUTO_UPDATE_URL)
+        if etag:
+            req.add_header('If-None-Match', etag)
+        req.add_header('User-Agent', 'statusline-autoupdate/1.0')
+
+        try:
+            resp = urlopen(req, timeout=10)
+        except HTTPError as e:
+            if e.code == 304:
+                cache['last_check'] = time.time()
+                _save_update_cache(cache)
+                print("Already up to date. (304 Not Modified)")
+                return
+            raise
+
+        content = resp.read().decode('utf-8')
+        new_etag = resp.headers.get('ETag', '')
+
+        # Validate
+        errors = []
+        if len(content) < 1000:
+            errors.append("Content too small ({} bytes)".format(len(content)))
+        lines = content.split('\n', 5)
+        if not any(line.startswith('#!') and 'python' in line for line in lines[:3]):
+            errors.append("No python shebang")
+        if 'def main()' not in content:
+            errors.append("No main() function")
+        try:
+            compile(content, '<update>', 'exec')
+        except SyntaxError as e:
+            errors.append("Syntax error: {}".format(e))
+
+        if errors:
+            print("Update validation failed:")
+            for err in errors:
+                print("  - {}".format(err))
+            return
+
+        # Check if actually different
+        new_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        try:
+            current_hash = hashlib.sha256(target.read_text(encoding='utf-8').encode('utf-8')).hexdigest()
+        except (IOError, OSError):
+            current_hash = ''
+
+        if new_hash == current_hash:
+            cache['last_check'] = time.time()
+            cache['etag'] = new_etag
+            cache['content_hash'] = new_hash
+            _save_update_cache(cache)
+            print("Already up to date. (same content)")
+            return
+
+        # Backup
+        backup_path = target.parent / 'statusline.py.backup'
+        try:
+            import shutil
+            shutil.copy2(str(target), str(backup_path))
+            print("Backup saved to {}".format(backup_path))
+        except (IOError, OSError) as e:
+            print("Warning: backup failed: {}".format(e))
+
+        # Atomic write
+        import tempfile
+        fd, tmp_path = tempfile.mkstemp(dir=str(target.parent), suffix='.py.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                f.write(content)
+            os.chmod(tmp_path, 0o755)
+            Path(tmp_path).rename(target)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+        cache['last_check'] = time.time()
+        cache['etag'] = new_etag
+        cache['content_hash'] = new_hash
+        cache['last_update'] = time.time()
+        _save_update_cache(cache)
+
+        print("Updated successfully!")
+        print("  New hash: {}".format(new_hash[:12]))
+        print("  Rollback: python3 ~/.claude/statusline.py --rollback")
+
+    except Exception as e:
+        print("Update failed: {}".format(e))
+
+def do_rollback():
+    """Rollback handler (--rollback). Restores from backup."""
+    target = Path.home() / '.claude' / 'statusline.py'
+    backup_path = target.parent / 'statusline.py.backup'
+
+    if not backup_path.exists():
+        print("No backup found at {}".format(backup_path))
+        return
+
+    try:
+        import shutil
+        # Validate backup first
+        backup_content = backup_path.read_text(encoding='utf-8')
+        try:
+            compile(backup_content, '<backup>', 'exec')
+        except SyntaxError:
+            print("Backup file has syntax errors. Aborting rollback.")
+            return
+
+        shutil.copy2(str(backup_path), str(target))
+        print("Rolled back to backup version.")
+        print("  Source: {}".format(backup_path))
+        print("  Target: {}".format(target))
+
+        # Clear update cache so next check re-evaluates
+        cache = load_update_cache() or {}
+        cache['content_hash'] = ''
+        _save_update_cache(cache)
+
+    except Exception as e:
+        print("Rollback failed: {}".format(e))
+
+# ============================================
+# Ratelimit data access + display helpers
+# ============================================
+
+def _adjust_stale_ratelimit(data):
+    """Adjust ratelimit data when five_hour block has expired.
+    If resets_at is in the past, advance it by 5h increments and clear utilization.
+    """
+    if not data:
+        return data
+    five_hour = data.get('five_hour')
+    if not five_hour or not five_hour.get('resets_at'):
+        return data
+    try:
+        resets_at = datetime.fromisoformat(five_hour['resets_at'])
+        now_utc = datetime.now(timezone.utc)
+        if resets_at < now_utc:
+            # Block expired - advance to current block and clear stale utilization
+            while resets_at < now_utc:
+                resets_at += timedelta(hours=5)
+            data = dict(data)  # shallow copy to avoid mutating cache
+            data['five_hour'] = dict(five_hour)
+            data['five_hour']['resets_at'] = resets_at.isoformat()
+            data['five_hour']['utilization'] = None  # unknown for new block
+    except (ValueError, TypeError):
+        pass
+    return data
+
+def get_ratelimit_info():
+    """Get rate limit info, triggering background probe if stale."""
+    cache = load_ratelimit_cache()
+    if cache:
+        data = cache.get('data')
+        # Reject cached API error responses (legacy bad cache)
+        if not data or data.get('type') == 'error' or 'seven_day' not in data:
+            # Delete bad cache so next successful probe can write fresh data
+            try:
+                get_ratelimit_cache_file().unlink(missing_ok=True)
+            except OSError:
+                pass
+            probe_ratelimit_background()
+            return None
+        age = time.time() - cache.get('timestamp', 0)
+        if age < RATELIMIT_CACHE_TTL:
+            return _adjust_stale_ratelimit(data)
+        probe_ratelimit_background()
+        return _adjust_stale_ratelimit(data)
+    probe_ratelimit_background()
+    return None
+
+def _get_utilization_color(pct):
+    """Get color based on utilization percentage."""
+    if pct >= 90:
+        return f"{Colors.BG_RED}{Colors.BRIGHT_WHITE}"
+    elif pct >= 75:
+        return Colors.BRIGHT_RED
+    elif pct >= 50:
+        return Colors.BRIGHT_YELLOW
+    return Colors.BRIGHT_GREEN
+
+def get_api_session_time_range(ratelimit_data):
+    """Extract 5-hour session time range from API data.
+    Returns (start_local_str, end_local_str) like ('3am', '8am') or None.
+    """
+    if not ratelimit_data:
+        return None
+    five_hour = ratelimit_data.get('five_hour')
+    if not five_hour or not five_hour.get('resets_at'):
+        return None
+    try:
+        resets_at = datetime.fromisoformat(five_hour['resets_at'])
+        end_local = resets_at.astimezone()  # Convert to local timezone
+        # Round to nearest hour (>=30min -> next hour, <30min -> current hour)
+        if end_local.minute >= 30:
+            end_local = end_local.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            end_local = end_local.replace(minute=0, second=0, microsecond=0)
+        start_local = end_local - timedelta(hours=5)
+
+        def fmt_hour(dt):
+            h = dt.hour
+            suffix = 'am' if h < 12 else 'pm'
+            h12 = h % 12 or 12
+            if dt.minute == 0:
+                return f"{h12}{suffix}"
+            return f"{h12}:{dt.minute:02d}{suffix}"
+
+        return (fmt_hour(start_local), fmt_hour(end_local))
+    except (ValueError, TypeError):
+        return None
+
+WEEKLY_TIMELINE_CACHE_TTL = 300  # 5 minutes
+
+def _get_weekly_timeline_cache_file():
+    return Path.home() / '.claude' / '.weekly_timeline_cache.json'
+
+def generate_weekly_timeline(ratelimit_data, num_segments=20):
+    """Generate timeline of token consumption across the 7-day window.
+
+    Uses resets_at from the API to determine the window, then scans JSONL transcripts
+    for token usage in each segment. 20 segments across 7 days (~8.4h each) to match
+    Session sparkline width.
+
+    Results are cached with a 5-minute TTL to avoid slow 7-day transcript scans.
+
+    Returns:
+        list: num_segments values representing token consumption per segment (oldest to newest)
+    """
+    empty = [0] * num_segments
+
+    seven_day = ratelimit_data.get('seven_day') if ratelimit_data else None
+    if not seven_day or not seven_day.get('resets_at'):
+        return empty
+
+    # Check cache first
+    cache_file = _get_weekly_timeline_cache_file()
+    try:
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                cached = json.load(f)
+            if time.time() - cached.get('timestamp', 0) < WEEKLY_TIMELINE_CACHE_TTL:
+                if cached.get('resets_at') == seven_day.get('resets_at'):
+                    tl = cached.get('timeline', empty)
+                    if len(tl) == num_segments:
+                        return tl
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    # Generate fresh timeline
+    timeline = _scan_weekly_timeline(seven_day['resets_at'], num_segments)
+
+    # Write cache (atomic)
+    try:
+        tmp = cache_file.with_suffix('.tmp')
+        with open(tmp, 'w') as f:
+            json.dump({'timestamp': time.time(), 'timeline': timeline, 'resets_at': seven_day.get('resets_at')}, f)
+        tmp.rename(cache_file)
+    except OSError:
+        pass
+
+    return timeline
+
+def _scan_weekly_timeline(resets_at_str, num_segments):
+    """Scan JSONL transcripts and build token timeline for the 7-day window."""
+    timeline = [0] * num_segments
+    total_seconds = 7 * 86400
+    seg_seconds = total_seconds / num_segments
+
+    try:
+        resets_at = datetime.fromisoformat(resets_at_str)
+        window_start = resets_at - timedelta(days=7)
+        window_start_utc = window_start.astimezone(timezone.utc).replace(tzinfo=None)
+
+        transcript_files = find_all_transcript_files(hours_limit=168)
+        processed_hashes = set()
+
+        for transcript_file in transcript_files:
+            try:
+                with open(transcript_file, 'r') as f:
+                    for line in f:
+                        try:
+                            entry = json.loads(line.strip())
+                            if not entry.get('timestamp'):
+                                continue
+
+                            entry_type = entry.get('type')
+                            usage = None
+                            if entry_type == 'assistant':
+                                msg = entry.get('message', {})
+                                usage = msg.get('usage') if msg else entry.get('usage')
+                            if not usage:
+                                continue
+
+                            msg_id = entry.get('uuid') or (entry.get('message', {}) or {}).get('id')
+                            req_id = entry.get('requestId')
+                            if msg_id and req_id:
+                                h = f"{msg_id}:{req_id}"
+                                if h in processed_hashes:
+                                    continue
+                                processed_hashes.add(h)
+
+                            ts = datetime.fromisoformat(
+                                entry['timestamp'].replace('Z', '+00:00')
+                            ).astimezone(timezone.utc).replace(tzinfo=None)
+
+                            if ts < window_start_utc:
+                                continue
+
+                            elapsed = (ts - window_start_utc).total_seconds()
+                            seg = min(num_segments - 1, int(elapsed / seg_seconds))
+
+                            tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
+                            timeline[seg] += tokens
+
+                        except (json.JSONDecodeError, ValueError, KeyError):
+                            continue
+            except (FileNotFoundError, PermissionError):
+                continue
+
+    except (ValueError, TypeError) as e:
+        print(f"[ccsl] weekly scan error: {e}", file=sys.stderr)
+
+    return timeline
+
+def get_weekly_line(ratelimit_data, weekly_timeline=None, sparkline_width=20):
+    """Generate Weekly line display (Line 4).
+    Format: Weekly:  ▁▂▃▅▆▇█▃ [64%] 32m, Extra: 7% $3.59/$50
+
+    Args:
+        ratelimit_data: Rate limit data dict
+        weekly_timeline: Weekly timeline data for sparkline
+        sparkline_width: Width of sparkline/progress bar (default: 20)
+    """
+    if not ratelimit_data:
+        return None
+
+    seven_day = ratelimit_data.get('seven_day')
+    if not seven_day:
+        return None
+
+    utilization = seven_day.get('utilization', 0)
+    util_color = _get_utilization_color(utilization)
+
+    # Calculate current position within the 7-day window (0.0 = start, 1.0 = reset)
+    current_pos = None
+    resets_at_str = seven_day.get('resets_at')
+    if resets_at_str:
+        try:
+            resets_at = datetime.fromisoformat(resets_at_str)
+            now = datetime.now(timezone.utc)
+            week_start = resets_at - timedelta(days=7)
+            elapsed = (now - week_start).total_seconds()
+            total = 7 * 86400
+            current_pos = max(0.0, min(1.0, elapsed / total))
+        except (ValueError, TypeError):
+            pass
+
+    parts = []
+    parts.append(f"{Colors.BRIGHT_CYAN}Weekly:  {Colors.RESET}")
+    if weekly_timeline:
+        parts.append(create_sparkline(weekly_timeline, width=sparkline_width, current_pos=current_pos))
+    else:
+        parts.append(create_sparkline([0] * sparkline_width, width=sparkline_width, current_pos=current_pos))
+    parts.append(f" {util_color}[{int(utilization)}%]{Colors.RESET}")
+
+    # Time remaining until reset
+    resets_at_str = seven_day.get('resets_at')
+    if resets_at_str:
+        try:
+            resets_at = datetime.fromisoformat(resets_at_str)
+            now = datetime.now(timezone.utc)
+            remaining = resets_at - now
+            remaining_seconds = max(0, remaining.total_seconds())
+            if remaining_seconds < 3600:
+                parts.append(f" {Colors.BRIGHT_WHITE}{int(remaining_seconds / 60)}m{Colors.RESET}")
+            elif remaining_seconds < 86400:
+                hours = int(remaining_seconds / 3600)
+                mins = int((remaining_seconds % 3600) / 60)
+                parts.append(f" {Colors.BRIGHT_WHITE}{hours}h{mins:02d}m{Colors.RESET}")
+            else:
+                days = int(remaining_seconds / 86400)
+                hours = int((remaining_seconds % 86400) / 3600)
+                mins = int((remaining_seconds % 3600) / 60)
+                parts.append(f" {Colors.BRIGHT_WHITE}{days}d{hours}h{mins:02d}m{Colors.RESET}")
+        except (ValueError, TypeError):
+            pass
+
+    # Extra usage info
+    extra = ratelimit_data.get('extra_usage')
+    if extra and extra.get('is_enabled'):
+        used = extra.get('used_credits', 0)
+        limit = extra.get('monthly_limit', 0)
+        # API returns cents — always divide by 100
+        used_str = f"${used / 100:.2f}"
+        limit_str = f"${limit / 100:.0f}"
+        parts.append(f", {Colors.BRIGHT_YELLOW}Ext:{Colors.RESET}")
+        parts.append(f" {Colors.BRIGHT_WHITE}{used_str}/{limit_str}{Colors.RESET}")
+
+    return "".join(parts)
+
+def get_burn_line(current_session_data=None, session_id=None, block_stats=None, current_block=None, burn_current_pos=None):
     """Generate burn line display (Line 4)
 
     Creates the Burn line showing session tokens and burn rate.
@@ -2713,12 +4427,13 @@ def get_burn_line(current_session_data=None, session_id=None, block_stats=None, 
         else:
             burn_timeline = [0] * 20
         
-        sparkline = create_sparkline(burn_timeline, width=20)
+        sparkline = create_sparkline(burn_timeline, width=20, current_pos=burn_current_pos, future_style="bar")
         
         return (f"{Colors.BRIGHT_CYAN}Burn:   {Colors.RESET} {sparkline} "
                 f"{Colors.BRIGHT_WHITE}{tokens_formatted} token(w/cache){Colors.RESET}, Rate: {burn_rate_formatted} t/m")
 
-    except Exception:
+    except Exception as e:
+        print(f"[ccsl] burn line error: {e}", file=sys.stderr)
         return f"{Colors.BRIGHT_CYAN}Burn:   {Colors.RESET} {Colors.BRIGHT_WHITE}ERROR{Colors.RESET}"
 if __name__ == "__main__":
     main()
