@@ -20,9 +20,8 @@ git_info=""
 if git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
   branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
 
-  # Check for changes
-  if ! git -C "$cwd" --no-optional-locks diff --quiet 2>/dev/null || \
-     ! git -C "$cwd" --no-optional-locks diff --cached --quiet 2>/dev/null; then
+  # Check for changes (use status --porcelain to avoid index lock conflicts)
+  if [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ]; then
     status="*"
   else
     status=""
