@@ -6,10 +6,12 @@
     ./zsh.nix
     ./neovim.nix
     ./tmux.nix
+    ./zellij.nix
     ./ghostty.nix
     ./hammerspoon.nix
     ./claude.nix
     ./fonts.nix
+    ./atuin.nix
   ];
 
   # Let Home Manager manage itself
