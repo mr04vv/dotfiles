@@ -27,6 +27,9 @@
     quick-terminal-autohide = "false"
     keybind = "global:shift+cmd+\=toggle_quick_terminal"
     keybind = shift+enter=text:\n
+    keybind = alt+left=unbind
+    keybind = alt+right=unbind
+    macos-option-as-alt = true
     font-feature = "-dlig"
     '';
   };
