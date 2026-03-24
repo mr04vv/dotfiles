@@ -166,6 +166,7 @@
       export PATH="$PROTO_HOME/shims:$PROTO_HOME/bin:$PATH"
       export PATH="$VOLTA_HOME/bin:$PATH"
       export PATH="$GOPATH/bin:$PATH"
+      . "$HOME/.cargo/env" 2>/dev/null
 
       # ============================================================================
       # Pure Prompt Configuration
