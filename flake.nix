@@ -76,7 +76,10 @@
 
           # Neovim nightly overlay
           {
-            nixpkgs.overlays = [ neovim-nightly-overlay.overlays.default ];
+            nixpkgs.overlays = [
+              neovim-nightly-overlay.overlays.default
+              (import ./overlays/mo.nix)
+            ];
           }
 
           # nixpkgs config
@@ -134,7 +137,10 @@
 
           # Neovim nightly overlay
           {
-            nixpkgs.overlays = [ neovim-nightly-overlay.overlays.default ];
+            nixpkgs.overlays = [
+              neovim-nightly-overlay.overlays.default
+              (import ./overlays/mo.nix)
+            ];
           }
 
           # nixpkgs config
@@ -156,7 +162,10 @@
           pkgs = import nixpkgs {
             inherit system;
             config.allowUnfree = true;
-            overlays = [ neovim-nightly-overlay.overlays.default ];
+            overlays = [
+              neovim-nightly-overlay.overlays.default
+              (import ./overlays/mo.nix)
+            ];
           };
         in
         home-manager.lib.homeManagerConfiguration {
