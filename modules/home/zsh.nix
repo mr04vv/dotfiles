@@ -15,8 +15,8 @@
 
     # Completion settings (based on Zim's completion module)
     completionInit = ''
-      # Add zsh-completions to fpath
-      fpath=(${pkgs.zsh-completions}/share/zsh/site-functions $fpath)
+      # Add zsh-completions and per-user profile completions to fpath
+      fpath=(${pkgs.zsh-completions}/share/zsh/site-functions /etc/profiles/per-user/$USER/share/zsh/site-functions $fpath)
 
       # Load and initialize the completion system
       autoload -Uz compinit
