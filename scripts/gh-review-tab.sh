@@ -21,8 +21,14 @@ LAYOUT_FILE=$(mktemp /tmp/zellij-review-XXXXXX.kdl)
 
 cat > "$LAYOUT_FILE" <<LAYOUT
 layout {
+    pane size=1 borderless=true {
+        plugin location="tab-bar"
+    }
     pane command="claude" {
         args "--permission-mode" "default" "${URL} をレビューして、完了したらapprove/comment/request changesのどれにするか聞いて。ユーザーの回答に応じてgh prコマンドで実行して。"
+    }
+    pane size=1 borderless=true {
+        plugin location="status-bar"
     }
 }
 LAYOUT
