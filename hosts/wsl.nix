@@ -38,6 +38,9 @@
         ExitApp
       }
 
+      ; LWin を LCtrl にリマップ
+      LWin::LCtrl
+
       ; 前回のスナップ状態を記録 { hwnd: { dir: "left"|"right"|"up"|"down", monitor: N } }
       prevSnap := Map()
 
@@ -274,8 +277,6 @@
           end),
         },
       }
-
-      config.enable_kitty_keyboard = true
 
       return config
     '';
