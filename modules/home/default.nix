@@ -1,4 +1,4 @@
-{ config, pkgs, arto, ... }:
+{ config, pkgs, arto, gh-review-watcher, ... }:
 
 {
   imports = [
@@ -12,6 +12,7 @@
     ./claude.nix
     ./fonts.nix
     ./atuin.nix
+    ./gh-review-watcher.nix
   ];
 
   # Let Home Manager manage itself
@@ -42,6 +43,7 @@
     # ============================================================================
     git
     gh                # GitHub CLI
+    gh-review-watcher.packages.${pkgs.system}.default  # GitHub review watcher
     github-copilot-cli # GitHub Copilot CLI
     ghq               # repository management
     lazygit           # TUI for git

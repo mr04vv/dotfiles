@@ -17,9 +17,13 @@
     };
     neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
     arto.url = "github:arto-app/Arto";
+    gh-review-watcher = {
+      url = "github:EdV4H/gh-review-watcher";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nix-darwin, home-manager, nixos-wsl, neovim-nightly-overlay, arto, ... }:
+  outputs = { self, nixpkgs, nix-darwin, home-manager, nixos-wsl, neovim-nightly-overlay, arto, gh-review-watcher, ... }:
   let
     hosts = {
       mac-m1 = {
@@ -68,7 +72,7 @@
               ];
               home.stateVersion = "23.11";
             };
-            home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay arto; };
+            home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay arto gh-review-watcher; };
           }
 
           # nix-darwin modules
@@ -132,7 +136,7 @@
               ];
               home.stateVersion = "23.11";
             };
-            home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay; };
+            home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay gh-review-watcher; };
           }
 
           # Neovim nightly overlay
@@ -179,7 +183,7 @@
               home.stateVersion = "23.11";
             }
           ];
-          extraSpecialArgs = { inherit neovim-nightly-overlay; };
+          extraSpecialArgs = { inherit neovim-nightly-overlay gh-review-watcher; };
         };
     };
   };
