@@ -25,7 +25,7 @@ layout {
         plugin location="tab-bar"
     }
     pane command="claude" {
-        args "--permission-mode" "default" "${URL} をレビューして、完了したらapprove/comment/request changesのどれにするか聞いて。ユーザーの回答に応じてgh prコマンドで実行して。"
+        args "--permission-mode" "default" "${URL} をレビューして、完了したら以下の番号で選択肢を提示して:\n1. approve\n2. reject\n3. comment\n\nユーザーが1を選んだ場合: コメント無しでapprove（gh pr review ${NUMBER} --repo ${REPO} --approve）\nユーザーが2を選んだ場合: コメント内容を聞いてからrequest changes（gh pr review ${NUMBER} --repo ${REPO} --request-changes --body <コメント>）\nユーザーが3を選んだ場合: コメント内容を聞いてからcomment（gh pr review ${NUMBER} --repo ${REPO} --comment --body <コメント>）\n\n実行完了後、zellij action close-tab コマンドでこのタブを閉じて。"
     }
     pane size=1 borderless=true {
         plugin location="status-bar"
