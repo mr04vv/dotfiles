@@ -209,7 +209,7 @@
             return 1
           fi
         done
-        command claude "$@"
+        command claude --enable-auto-mode "$@"
       }
 
       # ============================================================================
