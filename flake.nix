@@ -83,6 +83,7 @@
             nixpkgs.overlays = [
               neovim-nightly-overlay.overlays.default
               (import ./overlays/mo.nix)
+              (import ./overlays/gh.nix)
             ];
           }
 
@@ -144,6 +145,7 @@
             nixpkgs.overlays = [
               neovim-nightly-overlay.overlays.default
               (import ./overlays/mo.nix)
+              (import ./overlays/gh.nix)
             ];
           }
 
@@ -169,6 +171,7 @@
             overlays = [
               neovim-nightly-overlay.overlays.default
               (import ./overlays/mo.nix)
+              (import ./overlays/gh.nix)
             ];
           };
         in
