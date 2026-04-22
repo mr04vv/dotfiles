@@ -74,6 +74,15 @@ in
       # Other
       vim-wakatime
 
+      # Go
+      nvim-dap
+      nvim-dap-ui
+      nvim-dap-go
+      nvim-nio
+
+      # JavaScript / TypeScript debugging
+      nvim-dap-vscode-js
+
       # Arto
       arto-vim
     ];
@@ -83,10 +92,20 @@ in
       # LSP servers
       lua-language-server
       nil  # Nix LSP
+      vtsls  # TypeScript/JavaScript LSP
+      biome  # Biome (LSP + formatter + linter for JS/TS/JSON)
+      gopls  # Go LSP
 
       # Formatters
       stylua
       nixpkgs-fmt
+      gofumpt  # Stricter gofmt
+      goimports-reviser  # Go import organizer
+
+      # Linters / Debuggers
+      golangci-lint  # Go linter aggregator
+      delve  # Go debugger
+      vscode-js-debug  # JS/TS/Chrome debugger (provides `js-debug` binary)
     ];
 
     initLua = ''
@@ -296,6 +315,18 @@ in
           keymap("n", "<leader>ca", vim.lsp.buf.code_action, bufopts)
           keymap("n", "gr", vim.lsp.buf.references, bufopts)
           keymap("n", "<leader>f", function() vim.lsp.buf.format({ async = true }) end, bufopts)
+
+          -- Inlay hints: enable by default + toggle
+          local client = vim.lsp.get_client_by_id(args.data.client_id)
+          if client and client:supports_method("textDocument/inlayHint") then
+            vim.lsp.inlay_hint.enable(true, { bufnr = args.buf })
+            keymap("n", "<leader>ih", function()
+              vim.lsp.inlay_hint.enable(
+                not vim.lsp.inlay_hint.is_enabled({ bufnr = args.buf }),
+                { bufnr = args.buf }
+              )
+            end, bufopts)
+          end
         end,
       })
 
@@ -310,7 +341,46 @@ in
         },
       })
 
-      vim.lsp.enable({ "lua_ls", "nil_ls" })
+      -- vtsls (TypeScript / JavaScript)
+      -- Formatting is delegated to biome (via conform) when biome.json exists,
+      -- so we disable vtsls's formatting capability to avoid conflicts.
+      local vtsls_inlay_hints = {
+        parameterNames = { enabled = "literals" },
+        parameterTypes = { enabled = true },
+        variableTypes = { enabled = true },
+        propertyDeclarationTypes = { enabled = true },
+        functionLikeReturnTypes = { enabled = true },
+        enumMemberValues = { enabled = true },
+      }
+      vim.lsp.config('vtsls', {
+        on_init = function(client)
+          client.server_capabilities.documentFormattingProvider = false
+          client.server_capabilities.documentRangeFormattingProvider = false
+        end,
+        settings = {
+          typescript = { inlayHints = vtsls_inlay_hints },
+          javascript = { inlayHints = vtsls_inlay_hints },
+        },
+      })
+
+      -- biome LSP auto-activates only when biome.json / biome.jsonc is present
+      -- (root markers: biome.json, biome.jsonc, package.json with "biome" field).
+
+      -- gopls (Go)
+      vim.lsp.config('gopls', {
+        settings = {
+          gopls = {
+            analyses = {
+              unusedparams = true,
+              shadow = true,
+            },
+            staticcheck = true,
+            gofumpt = true,
+          },
+        },
+      })
+
+      vim.lsp.enable({ "lua_ls", "nil_ls", "vtsls", "biome", "gopls" })
 
       -- nvim-cmp
       local cmp = require("cmp")
@@ -409,9 +479,25 @@ in
         formatters_by_ft = {
           lua = { "stylua" },
           nix = { "nixpkgs_fmt" },
+          javascript = { "biome" },
+          javascriptreact = { "biome" },
+          typescript = { "biome" },
+          typescriptreact = { "biome" },
+          vue = { "biome" },
+          svelte = { "biome" },
+          json = { "biome" },
+          jsonc = { "biome" },
+          css = { "biome" },
+          go = { "goimports_reviser", "gofumpt" },
+        },
+        formatters = {
+          -- Only run biome when a biome config file exists in the project.
+          biome = {
+            require_cwd = true,
+          },
         },
         format_on_save = {
-          timeout_ms = 500,
+          timeout_ms = 1000,
           lsp_fallback = true,
         },
       })
@@ -520,6 +606,80 @@ in
       require("mini.pairs").setup()
       require("mini.comment").setup()
       require("mini.surround").setup()
+
+      -- none-ls (diagnostics for tools without a real LSP)
+      local null_ls = require("null-ls")
+      null_ls.setup({
+        sources = {
+          null_ls.builtins.diagnostics.golangci_lint,
+        },
+      })
+
+      -- nvim-dap-go (Go debugger powered by delve)
+      require("dap-go").setup()
+      require("dapui").setup()
+
+      -- nvim-dap-vscode-js (JS/TS/Chrome debugger powered by vscode-js-debug)
+      -- The `js-debug` binary is provided by pkgs.vscode-js-debug in extraPackages.
+      -- We resolve it via `vim.fn.exepath` so the path is looked up at runtime.
+      local js_debug_path = vim.fn.exepath("js-debug")
+      if js_debug_path ~= "" then
+        require("dap-vscode-js").setup({
+          debugger_cmd = { "js-debug" },
+          adapters = {
+            "pwa-node",
+            "pwa-chrome",
+            "pwa-msedge",
+            "node-terminal",
+            "pwa-extensionHost",
+          },
+        })
+
+        for _, lang in ipairs({ "typescript", "javascript", "typescriptreact", "javascriptreact" }) do
+          require("dap").configurations[lang] = {
+            {
+              type = "pwa-node",
+              request = "launch",
+              name = "Launch current file (Node)",
+              program = "''${file}",
+              cwd = "''${workspaceFolder}",
+              sourceMaps = true,
+            },
+            {
+              type = "pwa-node",
+              request = "attach",
+              name = "Attach to process",
+              processId = require("dap.utils").pick_process,
+              cwd = "''${workspaceFolder}",
+              sourceMaps = true,
+            },
+            {
+              type = "pwa-chrome",
+              request = "launch",
+              name = "Launch Chrome against localhost",
+              url = "http://localhost:3000",
+              webRoot = "''${workspaceFolder}",
+              sourceMaps = true,
+            },
+          }
+        end
+      end
+
+      -- Auto-open/close dap-ui with debugging sessions
+      local dap, dapui = require("dap"), require("dapui")
+      dap.listeners.after.event_initialized["dapui_config"] = function() dapui.open() end
+      dap.listeners.before.event_terminated["dapui_config"] = function() dapui.close() end
+      dap.listeners.before.event_exited["dapui_config"] = function() dapui.close() end
+
+      -- DAP keymaps
+      keymap("n", "<leader>db", dap.toggle_breakpoint, opts)
+      keymap("n", "<leader>dc", dap.continue, opts)
+      keymap("n", "<leader>di", dap.step_into, opts)
+      keymap("n", "<leader>do", dap.step_over, opts)
+      keymap("n", "<leader>dO", dap.step_out, opts)
+      keymap("n", "<leader>dr", dap.repl.open, opts)
+      keymap("n", "<leader>dt", require("dap-go").debug_test, opts)
+      keymap("n", "<leader>du", dapui.toggle, opts)
     '';
   };
 }
