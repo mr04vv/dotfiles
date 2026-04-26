@@ -540,11 +540,14 @@ in
       -- Lazygit
       keymap("n", "<leader>gg", "<cmd>LazyGit<cr>", opts)
 
-      -- Trouble
+      -- Trouble (v3 syntax)
       require("trouble").setup()
-      keymap("n", "<leader>xx", "<cmd>TroubleToggle<cr>", opts)
-      keymap("n", "<leader>xw", "<cmd>TroubleToggle workspace_diagnostics<cr>", opts)
-      keymap("n", "<leader>xd", "<cmd>TroubleToggle document_diagnostics<cr>", opts)
+      keymap("n", "<leader>xx", "<cmd>Trouble diagnostics toggle<cr>", opts)
+      keymap("n", "<leader>xw", "<cmd>Trouble diagnostics toggle<cr>", opts)
+      keymap("n", "<leader>xd", "<cmd>Trouble diagnostics toggle filter.buf=0<cr>", opts)
+      keymap("n", "<leader>xs", "<cmd>Trouble symbols toggle focus=false<cr>", opts)
+      keymap("n", "<leader>xl", "<cmd>Trouble lsp toggle focus=false win.position=right<cr>", opts)
+      keymap("n", "<leader>xq", "<cmd>Trouble qflist toggle<cr>", opts)
 
       -- Which-key
       require("which-key").setup()
