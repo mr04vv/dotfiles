@@ -1,4 +1,4 @@
-{ config, pkgs, arto, ... }:
+{ config, pkgs, arto, gh-review-watcher, ... }:
 
 {
   imports = [
@@ -13,6 +13,7 @@
     ./fonts.nix
     ./atuin.nix
     ./mise.nix
+    ./gh-review-watcher.nix
   ];
 
   # Let Home Manager manage itself
@@ -23,41 +24,42 @@
     # ============================================================================
     # CLI Tools
     # ============================================================================
-    bat               # cat with syntax highlighting
-    eza               # modern ls replacement
-    fd                # find alternative
-    fzf               # fuzzy finder
-    jq                # JSON processor
-    jnv               # interactive JSON filter
-    nnn               # terminal file manager
-    peco              # interactive filtering tool
-    ripgrep           # grep alternative
-    tree              # directory tree
+    bat # cat with syntax highlighting
+    eza # modern ls replacement
+    fd # find alternative
+    fzf # fuzzy finder
+    jq # JSON processor
+    jnv # interactive JSON filter
+    nnn # terminal file manager
+    peco # interactive filtering tool
+    ripgrep # grep alternative
+    tree # directory tree
     wget
     curl
     htop
-    fastfetch         # system information
+    fastfetch # system information
 
     # ============================================================================
     # Development Tools - Git & GitHub
     # ============================================================================
     git
-    gh                # GitHub CLI
+    gh # GitHub CLI
+    gh-review-watcher.packages.${pkgs.system}.default # GitHub review watcher
     github-copilot-cli # GitHub Copilot CLI
-    ghq               # repository management
-    lazygit           # TUI for git
+    ghq # repository management
+    lazygit # TUI for git
 
     # ============================================================================
     # Development Tools - Actions & CI
     # ============================================================================
-    act               # Run GitHub Actions locally
-    actionlint        # GitHub Actions linter
+    act # Run GitHub Actions locally
+    actionlint # GitHub Actions linter
 
     # ============================================================================
     # Development Tools - Code Quality
     # ============================================================================
-    clang-tools       # clang-format, clang-tidy
-    shellcheck        # shell script linter
+    clang-tools # clang-format, clang-tidy
+    shellcheck # shell script linter
 
     # ============================================================================
     # Build Tools
@@ -70,93 +72,98 @@
     # ============================================================================
     # Programming Languages & Runtimes
     # ============================================================================
-    go                # Go language
-    python313         # Python 3.13
-    nodejs            # Node.js (for Neovim, Copilot, etc.)
+    go # Go language
+    python313 # Python 3.13
+    nodejs # Node.js (for Neovim, Copilot, etc.)
 
-    ni                # Use the right package manager (@antfu/ni)
+    ni # Use the right package manager (@antfu/ni)
 
 
 
     # Rust
-    rustup            # Rust toolchain installer (manages cargo, rustc, etc.)
+    rustup # Rust toolchain installer (manages cargo, rustc, etc.)
 
     # Python tools
-    pipx              # Install Python apps in isolated environments
-    uv                # Fast Python package installer
+    pipx # Install Python apps in isolated environments
+    uv # Fast Python package installer
 
     # ============================================================================
     # Protocol Buffers & gRPC
     # ============================================================================
-    buf               # Protocol buffer toolkit
-    protobuf          # Protocol buffers
-    protoc-gen-go     # Go plugin for protoc
+    buf # Protocol buffer toolkit
+    protobuf # Protocol buffers
+    protoc-gen-go # Go plugin for protoc
     protoc-gen-go-grpc # gRPC Go plugin
-    grpcurl           # gRPC curl-like tool
-    ghz               # gRPC benchmarking tool
-    grpcurl           # gRPC curl-like tool
+    grpcurl # gRPC curl-like tool
+    ghz # gRPC benchmarking tool
+    grpcurl # gRPC curl-like tool
 
     # ============================================================================
     # Cloud & Infrastructure
     # ============================================================================
-    awscli2           # AWS CLI
-    kubectl           # Kubernetes CLI
-    kubernetes-helm   # Kubernetes package manager
-    kubeseal          # Sealed Secrets
-    minikube          # Local Kubernetes
-    terraform         # Infrastructure as Code
-    ngrok             # Tunneling service
+    awscli2 # AWS CLI
+    kubectl # Kubernetes CLI
+    kubernetes-helm # Kubernetes package manager
+    kubeseal # Sealed Secrets
+    minikube # Local Kubernetes
+    terraform # Infrastructure as Code
+    ngrok # Tunneling service
 
     # ============================================================================
     # Databases
     # ============================================================================
-    mysql80           # MySQL 8.0
-    postgresql_14     # PostgreSQL 14
-    redis             # Redis server
+    mysql84 # MySQL 8.4 LTS
+    postgresql_14 # PostgreSQL 14
+    redis # Redis server
 
     # ============================================================================
     # Network Tools
     # ============================================================================
-    inetutils         # telnet, etc.
-    websocat          # WebSocket client
+    inetutils # telnet, etc.
+    websocat # WebSocket client
 
     # ============================================================================
     # Embedded Development - AVR
     # ============================================================================
     pkgsCross.avr.buildPackages.gcc
     pkgsCross.avr.buildPackages.binutils
-    avrdude           # AVR programmer
+    avrdude # AVR programmer
 
     # ============================================================================
     # Embedded Development - QMK/Keyboards
     # ============================================================================
     # qmk - Disabled: requires gcc-arm-embedded which is not available on Intel Mac
-    dfu-programmer    # USB DFU programmer
-    dfu-util          # DFU utilities
+    dfu-programmer # USB DFU programmer
+    dfu-util # DFU utilities
     teensy-loader-cli # Teensy loader
 
     # ============================================================================
     # USB/Hardware Libraries
     # ============================================================================
-    hidapi            # HID API library
-    libftdi1          # FTDI USB library
-    libusb1           # USB library
+    hidapi # HID API library
+    libftdi1 # FTDI USB library
+    libusb1 # USB library
 
     # ============================================================================
     # Media Tools
     # ============================================================================
-    ffmpeg            # Video/audio processing
-    imagemagick       # Image processing
+    ffmpeg # Video/audio processing
+    imagemagick # Image processing
+
+    # ============================================================================
+    # Markdown Tools
+    # ============================================================================
+    mo # Markdown viewer in browser (GitHub-flavored)
 
     # ============================================================================
     # Other Tools
     # ============================================================================
     unzip
     gzip
-    adr-tools         # Architecture Decision Records
-    nginx             # Web server
-    golangci-lint     # Go linter
-    chezmoi           # Dotfiles manager
+    adr-tools # Architecture Decision Records
+    nginx # Web server
+    golangci-lint # Go linter
+    chezmoi # Dotfiles manager
 
     # ============================================================================
     # GUI Applications (macOS)
@@ -165,14 +172,14 @@
     # Those will need to be installed via other means or added to homebrew cask.
   ] ++ (if pkgs.stdenv.isDarwin then [
     # macOS-specific GUI applications available in nixpkgs
-    ghostty-bin       # Ghostty terminal emulator
-    shottr            # Screenshot app with OCR and annotation
-    arto.packages.${pkgs.system}.default  # Arto note-taking app
+    ghostty-bin # Ghostty terminal emulator
+    shottr # Screenshot app with OCR and annotation
+    arto.packages.${pkgs.system}.default # Arto note-taking app
   ] else [
     # Linux-specific packages
-    ghostty           # Ghostty terminal emulator (Linux)
-    libnotify         # Desktop notifications (notify-send)
-    pulseaudio        # Audio system (paplay)
-    alsa-utils        # ALSA utilities (aplay)
+    ghostty # Ghostty terminal emulator (Linux)
+    libnotify # Desktop notifications (notify-send)
+    pulseaudio # Audio system (paplay)
+    alsa-utils # ALSA utilities (aplay)
   ]);
 }
