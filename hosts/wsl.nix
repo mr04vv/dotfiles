@@ -162,15 +162,15 @@
       ; Ctrl+Q: アクティブウィンドウを閉じる
       ^q::WinClose("A")
 
-      ; Ctrl+[ / Ctrl+]: ブラウザバック / フォワード (WezTerm以外)
+      ; WezTerm以外でのみ有効なキーバインド
       #HotIf !WinActive("ahk_exe wezterm-gui.exe")
+      ; Ctrl+[ / Ctrl+]: ブラウザバック / フォワード
       ^[::Send("{Alt down}{Left}{Alt up}")
       ^]::Send("{Alt down}{Right}{Alt up}")
 
-      ; Ctrl+{ / Ctrl+}: タブを前 / 次に切り替え (WezTerm以外)
+      ; Ctrl+{ / Ctrl+}: タブを前 / 次に切り替え
       ^+[::Send("{Ctrl down}{Shift down}{Tab}{Shift up}{Ctrl up}")
       ^+]::Send("{Ctrl down}{Tab}{Ctrl up}")
-      #HotIf
 
       ; Alt+←→: ワード単位で移動
       !Left::Send("{Ctrl down}{Left}{Ctrl up}")
@@ -179,6 +179,7 @@
       ; Alt+Shift+←→: ワード単位で選択
       !+Left::Send("{Ctrl down}{Shift down}{Left}{Shift up}{Ctrl up}")
       !+Right::Send("{Ctrl down}{Shift down}{Right}{Shift up}{Ctrl up}")
+      #HotIf
 
       ; Ctrl+←→: 行頭/行末に移動
       ^Left::Send("{Home}")

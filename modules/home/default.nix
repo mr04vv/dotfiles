@@ -12,6 +12,7 @@
     ./claude.nix
     ./fonts.nix
     ./atuin.nix
+    ./mise.nix
   ];
 
   # Let Home Manager manage itself
@@ -73,8 +74,12 @@
     python313         # Python 3.13
     nodejs            # Node.js (for Neovim, Copilot, etc.)
 
-    # Language version managers (team compatibility)
-    volta             # Node.js version manager (for team projects)
+    ni                # Use the right package manager (@antfu/ni)
+
+
+
+    # Rust
+    rustup            # Rust toolchain installer (manages cargo, rustc, etc.)
 
     # Python tools
     pipx              # Install Python apps in isolated environments
