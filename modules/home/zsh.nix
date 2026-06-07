@@ -123,9 +123,7 @@
       VISUAL = "nvim";
       NNN_PLUG = "p:preview-tui";
       GOPATH = "$HOME/go";
-      VOLTA_FEATURE_PNPM = "1";
       PROTO_HOME = "$HOME/.proto";
-      VOLTA_HOME = "$HOME/.volta";
     };
 
     # Shell aliases (from existing config)
@@ -164,7 +162,7 @@
       # ============================================================================
       export PATH="$HOME/.local/bin:$PATH"
       export PATH="$PROTO_HOME/shims:$PROTO_HOME/bin:$PATH"
-      export PATH="$VOLTA_HOME/bin:$PATH"
+
       export PATH="$GOPATH/bin:$PATH"
       . "$HOME/.cargo/env" 2>/dev/null
 
