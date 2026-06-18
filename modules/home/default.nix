@@ -44,7 +44,7 @@
     # ============================================================================
     git
     gh # GitHub CLI
-    gh-review-watcher.packages.${pkgs.system}.default # GitHub review watcher
+    gh-review-watcher.packages.${pkgs.stdenv.hostPlatform.system}.default # GitHub review watcher
     github-copilot-cli # GitHub Copilot CLI
     ghq # repository management
     lazygit # TUI for git
@@ -174,7 +174,7 @@
     # macOS-specific GUI applications available in nixpkgs
     ghostty-bin # Ghostty terminal emulator
     shottr # Screenshot app with OCR and annotation
-    arto.packages.${pkgs.system}.default # Arto note-taking app
+    arto.packages.${pkgs.stdenv.hostPlatform.system}.default # Arto note-taking app
   ] else [
     # Linux-specific packages
     ghostty # Ghostty terminal emulator (Linux)

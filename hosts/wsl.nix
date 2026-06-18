@@ -171,15 +171,38 @@
       ; Ctrl+{ / Ctrl+}: タブを前 / 次に切り替え
       ^+[::Send("{Ctrl down}{Shift down}{Tab}{Shift up}{Ctrl up}")
       ^+]::Send("{Ctrl down}{Tab}{Ctrl up}")
-
-      ; Alt+←→: ワード単位で移動
-      !Left::Send("{Ctrl down}{Left}{Ctrl up}")
-      !Right::Send("{Ctrl down}{Right}{Ctrl up}")
-
-      ; Alt+Shift+←→: ワード単位で選択
-      !+Left::Send("{Ctrl down}{Shift down}{Left}{Shift up}{Ctrl up}")
-      !+Right::Send("{Ctrl down}{Shift down}{Right}{Shift up}{Ctrl up}")
       #HotIf
+
+      ; Alt+←→: ワード単位で移動。ただし WezTerm では Alt+矢印をそのまま透過し、
+      ; zellij の pane focus 切り替え (\e[1;3x) を届ける。
+      ; #HotIf の WinActive 判定は AHK が管理者権限で動くと UIPI により
+      ; 非管理者の WezTerm を正しく検知できないため、本体で明示的にガードする。
+      !Left:: {
+        if WinActive("ahk_exe wezterm-gui.exe")
+          Send("!{Left}")
+        else
+          Send("{Ctrl down}{Left}{Ctrl up}")
+      }
+      !Right:: {
+        if WinActive("ahk_exe wezterm-gui.exe")
+          Send("!{Right}")
+        else
+          Send("{Ctrl down}{Right}{Ctrl up}")
+      }
+
+      ; Alt+Shift+←→: ワード単位で選択 (WezTerm では透過)
+      !+Left:: {
+        if WinActive("ahk_exe wezterm-gui.exe")
+          Send("!+{Left}")
+        else
+          Send("{Ctrl down}{Shift down}{Left}{Shift up}{Ctrl up}")
+      }
+      !+Right:: {
+        if WinActive("ahk_exe wezterm-gui.exe")
+          Send("!+{Right}")
+        else
+          Send("{Ctrl down}{Shift down}{Right}{Shift up}{Ctrl up}")
+      }
 
       ; Ctrl+←→: 行頭/行末に移動
       ^Left::Send("{Home}")
@@ -260,6 +283,15 @@
         { key = 'q', mods = 'CTRL', action = act.QuitApplication },
         { key = '[', mods = 'CTRL', action = act.ActivatePaneDirection 'Prev' },
         { key = ']', mods = 'CTRL', action = act.ActivatePaneDirection 'Next' },
+        -- Alt+矢印を明示的に Alt 修飾シーケンス (;3) で送る。
+        -- これを指定しないと環境によっては ;5 (Ctrl 修飾) として届き、zellij の Alt バインドに合致しない。
+        { key = 'LeftArrow', mods = 'ALT', action = act.SendString '\x1b[1;3D' },
+        { key = 'RightArrow', mods = 'ALT', action = act.SendString '\x1b[1;3C' },
+        { key = 'UpArrow', mods = 'ALT', action = act.SendString '\x1b[1;3A' },
+        { key = 'DownArrow', mods = 'ALT', action = act.SendString '\x1b[1;3B' },
+        -- Alt+Shift+←→ を Shift+Alt 修飾シーケンス (;4) で送る。zellij のタブ移動用。
+        { key = 'LeftArrow', mods = 'ALT|SHIFT', action = act.SendString '\x1b[1;4D' },
+        { key = 'RightArrow', mods = 'ALT|SHIFT', action = act.SendString '\x1b[1;4C' },
         { key = '{', mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
         { key = '}', mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(1) },
         { key = 'v', mods = 'CTRL', action = act.PasteFrom 'Clipboard' },

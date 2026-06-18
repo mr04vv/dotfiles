@@ -10,10 +10,16 @@
       shared {
         bind "Alt [" { MoveFocus "Left"; }
         bind "Alt ]" { MoveFocus "Right"; }
+        bind "Alt Left" { MoveFocus "Left"; }
+        bind "Alt Right" { MoveFocus "Right"; }
+        bind "Alt Up" { MoveFocus "Up"; }
+        bind "Alt Down" { MoveFocus "Down"; }
         bind "Super Alt [" { GoToPreviousTab; }
         bind "Super Alt ]" { GoToNextTab; }
         bind "Ctrl Alt [" { GoToPreviousTab; }
         bind "Ctrl Alt ]" { GoToNextTab; }
+        bind "Alt Shift Left" { GoToPreviousTab; }
+        bind "Alt Shift Right" { GoToNextTab; }
       }
     }
   '';
