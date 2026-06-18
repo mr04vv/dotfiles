@@ -233,6 +233,37 @@
       eval "$(${pkgs.zoxide}/bin/zoxide init --cmd cd zsh)"
 
       # ============================================================================
+      # WezTerm / OSC 7 (current working directory reporting)
+      # ============================================================================
+      # WezTerm は OSC 7 で通知された CWD を新規タブ・分割の初期ディレクトリに使う。
+      # WezTerm は Windows 側アプリのため、WSL のパス (/home/...) ではなく
+      # Windows から見える UNC パス (\\wsl.localhost\...) を file:// URI で送る必要がある。
+      ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+        if [[ -n "$WEZTERM_PANE" ]] && command -v wslpath >/dev/null 2>&1; then
+          __wezterm_osc7() {
+            local win_path
+            win_path=$(wslpath -w "$PWD" 2>/dev/null) || return
+            # バックスラッシュをスラッシュに変換し、各パスセグメントを URL エンコードする
+            win_path=''${win_path//\\//}
+            local encoded=""
+            local i ch
+            for (( i = 1; i <= ''${#win_path}; i++ )); do
+              ch=''${win_path[$i]}
+              case "$ch" in
+                ([a-zA-Z0-9/._~-]) encoded+="$ch" ;;
+                (*) encoded+=$(printf '%%%02X' "'$ch") ;;
+              esac
+            done
+            printf '\033]7;file://%s\033\\' "$encoded"
+          }
+          # ディレクトリ変更時と初回起動時に送信する
+          autoload -Uz add-zsh-hook
+          add-zsh-hook chpwd __wezterm_osc7
+          __wezterm_osc7
+        fi
+      ''}
+
+      # ============================================================================
       # Source local configuration
       # ============================================================================
       if [ -f "$HOME/.zshrc.local" ]; then
