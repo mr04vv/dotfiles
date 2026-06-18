@@ -272,6 +272,11 @@
       }
       config.font_size = 10
       config.color_scheme = 'Desert'
+      -- 起動直後の最初のウィンドウは WSL のホームで開く。
+      -- wsl.exe を引数なしで起動すると CWD は Windows 側のカレント (/mnt/c/Users/...) に
+      -- なってしまうため、--cd ~ で WSL ホームを明示する。
+      -- 新規タブ/分割は SpawnTab 'CurrentPaneDomain' と OSC 7 により現在のディレクトリに追従する
+      -- (default_prog の --cd ~ は新しいペインの起動引数には引き継がれない)。
       config.default_prog = { "wsl.exe", "--cd", "~" }
 
       config.keys = {
