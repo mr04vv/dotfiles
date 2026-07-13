@@ -207,7 +207,7 @@
             return 1
           fi
         done
-        command claude --enable-auto-mode "$@"
+        command claude --permission-mode auto "$@"
       }
 
       # ============================================================================

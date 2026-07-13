@@ -29,6 +29,12 @@
     name = "yolo-review"
     command = """echo {labels} | grep -q yolo && claude --permission-mode default -p '/yolo-review {number} {repo}'"""
 
+    # PRがリストから消えた時（マージ・クローズ・レビュー解除等）: 事前レビューのキャッシュを掃除
+    # {repo} は owner/repo 形式なので gh-review-tab.sh と同じく / を - に変換する
+    [[on_remove]]
+    name = "cleanup-cache"
+    command = """rm -rf "/tmp/gh-review-cache/$(echo '{repo}' | tr / -)-{number}\""""
+
     # Enter押下時: ブラウザでPRを開く
     [on_select]
     command = "open {url}"
