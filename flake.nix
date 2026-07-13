@@ -81,10 +81,9 @@
           # nix-darwin modules
           ./modules/darwin
 
-          # Neovim nightly overlay
+          # Custom overlays
           {
             nixpkgs.overlays = [
-              neovim-nightly-overlay.overlays.default
               (import ./overlays/mo.nix)
               (import ./overlays/gh.nix)
             ];
@@ -143,10 +142,9 @@
             home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay gh-review-watcher; };
           }
 
-          # Neovim nightly overlay
+          # Custom overlays
           {
             nixpkgs.overlays = [
-              neovim-nightly-overlay.overlays.default
               (import ./overlays/mo.nix)
               (import ./overlays/gh.nix)
             ];
@@ -172,7 +170,6 @@
             inherit system;
             config.allowUnfree = true;
             overlays = [
-              neovim-nightly-overlay.overlays.default
               (import ./overlays/mo.nix)
               (import ./overlays/gh.nix)
             ];

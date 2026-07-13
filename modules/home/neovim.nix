@@ -15,7 +15,13 @@ in
 {
   programs.neovim = {
     enable = true;
-    package = pkgs.neovim;  # Uses neovim-nightly from overlay
+    # Stable neovim-unwrapped from nixpkgs. The nightly overlay builds tree-sitter
+    # via cargo, which fetches from static.crates.io; under the corporate Netskope
+    # SSL-inspection proxy that fetch fails Python's strict CA check (the Netskope
+    # CA lacks a critical basicConstraints flag). Stable 0.12.x does not vendor
+    # cargo deps, so it builds cleanly. Switch back to `pkgs.neovim` if the proxy
+    # stops intercepting crates.io.
+    package = pkgs.neovim-unwrapped;
 
     viAlias = true;
     vimAlias = true;
