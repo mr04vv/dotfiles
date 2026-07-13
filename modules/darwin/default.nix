@@ -18,6 +18,18 @@
     touchIdAuth = true;
   };
 
+  # Corporate Netskope SSL-inspection CA (public certs only, no private keys).
+  # Adds the CA to /etc/ssl/certs/ca-certificates.crt (NIX_SSL_CERT_FILE), which
+  # covers host-side git/curl during flake evaluation.
+  #
+  # NOTE: with Determinate Nix (nix.enable = false) the build daemon uses its own
+  # Keychain-synced bundle (/etc/nix/macos-keychain.crt), NOT this file, so it does
+  # not fix fetches inside the FOD build sandbox. For that, the CA must be marked as
+  # explicitly trusted (trustRoot) in the System keychain so Determinate syncs it:
+  #   sudo security add-trusted-cert -d -r trustRoot \
+  #     -k /Library/Keychains/System.keychain modules/darwin/certs/netskope-ca.crt
+  security.pki.certificateFiles = [ ./certs/netskope-ca.crt ];
+
   # Nix settings
   nix = {
     # Determinate Nix compatibility
