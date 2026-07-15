@@ -1,41 +1,55 @@
 { config, pkgs, ... }:
 
+let
+  scriptsDir = "${config.home.homeDirectory}/dotfiles/scripts";
+in
 {
   xdg.configFile."gh-review-watcher/config.toml".text = ''
+    # ポーリング間隔（秒）
     interval = 120
 
-    # 新規PR検出時: ログファイルに記録（デバッグ用）
+    # --- on_new_pr: 新規PR検出時 ---
+
+    # ログファイルに記録（デバッグ用）
     [[on_new_pr]]
     name = "log"
     command = "echo '[NEW PR] {repo} #{number} {title} by @{author}' >> /tmp/gh-review-watcher-hooks.log"
 
-    # 新規PR検出時: macOS通知
+    # macOS通知
     [[on_new_pr]]
     name = "notify"
     command = """/Applications/Utilities/Notifier.app/Contents/MacOS/Notifier \
       --type banner \
       --title 'PR Review Request' \
       --subtitle '{repo} #{number}' \
-      --message '{title} by @{author}' \
+      --message {title} \
       --sound default"""
 
-    # 新規PR検出時: zellijの新しいタブでClaude Codeにレビューさせる
+    # yoloラベルがなければZellijの新タブでClaude Codeレビューを実行
+    # 分析完了後にタブにフォーカスが移るため、起動直後はgo-to-previous-tabで元タブに戻す
     [[on_new_pr]]
     name = "review-tab"
-    command = """PR_REPO={repo} PR_NUMBER={number} PR_TITLE={title} PR_URL={url} ${config.home.homeDirectory}/dotfiles/scripts/gh-review-tab.sh"""
+    command = """echo '{labels}' | grep -q yolo || (zellij action new-tab --name 'Review: {repo}#{number}' --close-on-exit -- \
+      ${scriptsDir}/review-pr.sh '{url}' '{number}' '{repo}' && zellij action go-to-previous-tab)"""
 
-    # 毎ポーリング: "yolo" ラベルがついていたらClaude Codeでレビュー判定（PR単位で1回のみ実行）
+    # --- on_poll: 毎ポーリング ---
+
+    # "yolo" ラベルがついたPRはClaude Codeで自動レビュー判定。
+    # 何が起きたか追えるよう各分岐をログに残している（CHECK→RUN/SKIP）。
     [[on_poll]]
     name = "yolo-review"
-    command = """echo {labels} | grep -q yolo && claude --permission-mode default -p '/yolo-review {number} {repo}'"""
+    command = """echo '[YOLO-CHECK] {repo}#{number} labels=[{labels}]' >> /tmp/gh-review-watcher-hooks.log && (echo '{labels}' | grep -q yolo && echo '[YOLO-RUN] {repo}#{number}' >> /tmp/gh-review-watcher-hooks.log && claude --dangerously-skip-permissions -p '/yolo-review {number} {repo}' >> /tmp/gh-review-watcher-hooks.log 2>&1 || echo '[YOLO-SKIP] {repo}#{number}' >> /tmp/gh-review-watcher-hooks.log)"""
 
-    # PRがリストから消えた時（マージ・クローズ・レビュー解除等）: 事前レビューのキャッシュを掃除
-    # {repo} は owner/repo 形式なので gh-review-tab.sh と同じく / を - に変換する
+    # --- on_remove: PRがリストから消えた時（マージ・クローズ・レビュー解除等） ---
+
+    # レビュータブを自動で閉じる（実行内容をログにも残す）
     [[on_remove]]
-    name = "cleanup-cache"
-    command = """rm -rf "/tmp/gh-review-cache/$(echo '{repo}' | tr / -)-{number}\""""
+    name = "close-review-tab"
+    command = "echo '[REMOVE] {repo}#{number}' >> /tmp/gh-review-watcher-hooks.log && ${scriptsDir}/close-merged-review-tab.sh '{number}' '{repo}' >> /tmp/gh-review-watcher-hooks.log 2>&1"
 
-    # Enter押下時: ブラウザでPRを開く
+    # --- on_select: Enter押下時 ---
+
+    # ブラウザでPRを開く
     [on_select]
     command = "open {url}"
   '';

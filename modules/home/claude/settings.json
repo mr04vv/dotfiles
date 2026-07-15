@@ -139,5 +139,6 @@
     "command": "~/.claude/statusline.py",
     "padding": 0,
     "type": "command"
-  }
+  },
+  "theme": "custom:midnight"
 }
