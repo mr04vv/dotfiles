@@ -11,6 +11,7 @@
     install -D -m 755 ${./claude/scripts/deny-check.sh} ${config.home.homeDirectory}/.claude/scripts/deny-check.sh
     install -D -m 644 ${./claude/cat.mp3} ${config.home.homeDirectory}/.claude/cat.mp3
     install -D -m 644 ${./claude/cat-amae.mp3} ${config.home.homeDirectory}/.claude/cat-amae.mp3
+    install -D -m 644 ${./claude/themes/midnight.json} ${config.home.homeDirectory}/.claude/themes/midnight.json
 
     # skills (chmod before cp to handle read-only files from previous runs)
     mkdir -p ${config.home.homeDirectory}/.claude/skills

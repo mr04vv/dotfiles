@@ -29,7 +29,7 @@
       # Development Tools
       "cursor"              # AI-powered code editor
       "bruno"               # API client
-      "docker"              # Docker Desktop
+      "docker-desktop"      # Docker Desktop
       "wezterm"             # Terminal emulator
       "tableplus"           # Database GUI
       "sequel-ace"          # MySQL GUI
@@ -50,15 +50,12 @@
       # Screen Recording
       "screen-studio"       # Screen recorder
 
-      # GitHub
-      "github"              # GitHub Desktop
-
       # Keyboard Firmware
       "qmk-toolbox"         # QMK Toolbox
 
       # Utilities
       "ngrok"               # Tunnel service
-      "flux"                # Blue light filter (f.lux)
+      "flux-app"            # Blue light filter (f.lux)
       "hammerspoon"         # Automation tool
     ];
 
