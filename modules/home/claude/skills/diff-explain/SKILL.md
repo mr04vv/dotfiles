@@ -1,35 +1,38 @@
 ---
 name: diff-explain
 description: >-
-  Generate an annotated diff-review page in the browser: changes are grouped
-  into semantic "change groups" (across files), each with an intent
-  explanation, a risk level (要注意/注意/低リスク), tags, review findings
-  (指摘), and a per-group "確認して承認" checkbox with an approval progress
-  bar. Works for branch-vs-base diffs and also unstaged/staged/worktree
-  diffs. Use this skill whenever the user asks to "explain the diff",
-  "差分を解説して", "変更内容をレビュー画面で見たい", "未ステージの変更をまとめて",
-  "レビュー前に変更を整理して", wants a visual/browser walkthrough of what
-  changed on a branch vs main/master/develop, or wants to review their own
-  uncommitted changes before committing. Also trigger for phrasings like
-  "このブランチで何を変えたか説明して" or "diffをブラウザで見たい" even if
-  "review" is not mentioned. Do NOT use for reviewing a remote PR by URL, or
-  for one-line diff questions answerable inline in chat.
+  Generate an annotated diff-EXPLANATION page in the browser: changes are
+  grouped into semantic "change groups" (across files), each with an intent
+  explanation, a risk level (要注意/注意/低リスク), tags, and per-hunk /
+  per-line explanations (意図・コード解説・解説) — but NO review findings.
+  The page also has per-line & multi-line human comment boxes and (branch
+  diffs) GitHub PR comment submission for the human's own comments. Use this
+  skill when the user wants to UNDERSTAND a diff, not have it critiqued:
+  "差分を解説して", "explain the diff", "何を変えたか説明して",
+  "このブランチで何を変えたか", "変更内容をまとめて", "diffをブラウザで見たい",
+  "レビュー前に変更を整理して" (understanding sense). If the user wants
+  findings / 指摘 / a critical review, use the sibling skill **diff-review**
+  instead. Do NOT use for reviewing a remote PR by URL, or for one-line diff
+  questions answerable inline in chat.
 ---
 
 # Diff Explain
 
-Build a self-contained review page for a diff, organized the way a reviewer
-thinks — not file by file, but as **semantic change groups**: "URL・ホスト
-判定の共通基盤", "設計文書と移行計画の更新", and so on. Each group carries an
-intent (意図), a risk level, tags, annotated hunks, review findings (指摘),
-and an approval checkbox. A progress bar in the header tracks 承認 N/M. The
-output is one HTML file with zero network dependencies.
+Build a self-contained **explanation** page for a diff, organized the way a
+reader thinks — not file by file, but as **semantic change groups**. Each
+group carries an intent (意図), a risk level, tags, and annotated hunks
+explaining *what* changed and *why*. This skill is the **explanation-only**
+variant: it does **not** emit review findings (指摘) or 要改善. Humans can
+still add per-line / multi-line comments and, on a branch diff, send those
+comments to the GitHub PR.
 
-Division of labor: `scripts/build_diff_page.py` does everything
-deterministic — diff extraction, parsing, global hunk ids, intraline
-highlighting, HTML rendering, approval-state persistence. Your job is the
-part that requires understanding the code: reading the diff and writing
-`explanations.json`. Do not hand-write the HTML or re-parse the diff.
+指摘・レビューが欲しいときは姉妹スキル **diff-review** を使う。こちらは解説
+専用で、findings/unclear を一切出さない（`render --no-review`）。
+
+Division of labor: `scripts/build_diff_page.py` does everything deterministic
+— diff extraction, parsing, hunk ids, intraline highlighting, HTML rendering,
+state persistence. Your job: read the diff and write `explanations.json` with
+the explanatory annotations. Do not hand-write the HTML or re-parse the diff.
 
 ## Workflow
 
@@ -39,81 +42,62 @@ part that requires understanding the code: reading the diff and writing
 python <skill-path>/scripts/build_diff_page.py extract [--mode MODE]
 ```
 
-Pick the mode from what the user asked for:
+Modes:
 
-- `branch` (default) — current branch vs base, three-dot style
-  (`merge-base..HEAD`). Base auto-detects via `origin/HEAD` then
-  `main`/`master`/`develop`; pass `--base <branch>` if the user names one.
-- `unstaged` — working tree vs index (「未ステージの変更」).
-- `staged` — index vs HEAD (「ステージした変更」).
-- `worktree` — working tree vs HEAD (staged + unstaged together).
+- `branch` (default) — current branch vs base (`merge-base..HEAD`). Base
+  auto-detects via `origin/HEAD` then `main`/`master`/`develop`; pass
+  `--base <branch>` if named. PR コメント送信は branch モードのみ。
+- `unstaged` — working tree vs index.
+- `staged` — index vs HEAD.
+- `worktree` — working tree vs HEAD (staged + unstaged).
 
-Add `--workdir <dir>` to reuse a directory when regenerating.
+Add `--workdir <dir>` to reuse a directory.
 
 **解説量 `--detail {small|medium|large}`** (default `medium`): 生成する解説
-プロセ（意図・コード解説・解説）の分量レベル。ユーザーが「軽く/ざっくり」
-「詳しく/しっかり」等と言ったら対応するレベルを選ぶ。extract 時に保存され、
-ページヘッダーにも表示される。§3 のレベル定義に従って explanations.json を
-書くこと。
+（意図・コード解説・解説）の分量レベル。ユーザーが「軽く/ざっくり」「詳しく/
+しっかり」等と言ったら選ぶ。extract 時に保存され、ページヘッダーにも表示。
 
-The script prints the workdir and a **hunk index**: every file with its
-hunks and their global ids (`h001`, `h002`, …). Those ids are what you
-assign to groups in `explanations.json`. 各ファイルには `[status]` と行数、
-そして lockfile・vendored deps・ビルド生成物・生成コードには
+The script prints the workdir and a **hunk index**: files, hunks, and their
+global ids (`h001`, …) — the ids you assign to groups. lockfile・生成物には
 **`(generated — 解説不要)`** マークが付く。It also writes `raw.diff` and
-`diff_data.json`. If it exits with "No differences", report that and stop.
+`diff_data.json`. If it exits with "No differences", report and stop.
 
 ### 2. Read the diff and plan the groups
 
-Read `<workdir>/raw.diff`. Then decide the change groups. Good groups follow
-the *logical structure of the change*, not the directory tree: a group can
-(and usually does) span files. Aim for roughly 3–8 groups; a reviewer should
-be able to approve them one at a time. Typical shapes:
+Read `<workdir>/raw.diff` and decide change groups by the *logical structure*
+of the change (a group can span files). Aim for 3–8 groups. Typical shapes:
+新しい基盤・共通化 / 使う側の機械的な置き換え / テスト・docs・生成物. Order
+core first, mechanical/low-risk later. Unassigned hunks land in an automatic
+「その他の変更」 group.
 
-- 新しい基盤・共通化 (the core of the change — usually the highest risk)
-- それを使う側の機械的な置き換え (broad but mechanical — medium risk)
-- テストの追従、docs、生成物 (low risk)
-
-Order groups by where a reviewer should start: core first, mechanical and
-low-risk later. Every hunk you don't assign lands in an automatic
-「その他の変更」 group — that's a fallback, not a dumping ground; prefer
-assigning everything deliberately.
-
-For large diffs, triage: read the hunk index first, read meaningful files
-fully, skim mechanical mass-changes. If ±3 lines of context isn't enough to
-understand a hunk, read the actual file in the repo — guessed explanations
-are worse than short ones.
+For large diffs, triage: read the hunk index, read meaningful files fully,
+skim mechanical mass-changes. If ±3 lines of context isn't enough, read the
+actual file — guessed explanations are worse than short ones.
 
 ### 3. Write explanations.json
 
-Write `<workdir>/explanations.json`:
+Write `<workdir>/explanations.json`. **解説専用なので findings / unclear は
+書かない**（書いても `--no-review` で無視される）。
 
 ```json
 {
-  "title": "app/system URL整理の未ステージ差分レビュー",
+  "title": "app/system URL整理の差分解説",
   "groups": [
     {
       "name": "URL・ホスト判定の共通基盤",
       "risk": "high",
       "tags": ["core"],
       "description": "一覧に出す60字程度の要約(省略時はintent先頭を使用)",
-      "intent": "従来はcontroller・view・batchの三箇所でURLを個別に組み立てており、deployment modeを追加するたびに分岐が増え不整合の温床になっていた。本グループではURL生成とhost判定を`UrlResolver`一か所へ集約し、legacy-path方式とsubdomain方式をmodeフラグで切り替える形に再設計する。呼び出し側は文字列連結をやめて`resolver.url_for(...)`を呼ぶだけになり、影響範囲は三モジュールに広がるが判定ロジックの重複は解消される。subdomain方式はDNS設定が前提のため、未設定環境では従来のlegacy-pathへ安全にfallbackする設計にした。既存URLの後方互換は保つが、生成順序が変わるためリダイレクトのテストは要確認。",
+      "intent": "従来はcontroller・view・batchの三箇所でURLを個別に組み立てており、deployment modeを追加するたびに分岐が増え不整合の温床になっていた。本グループではURL生成とhost判定を`UrlResolver`一か所へ集約し、legacy-path方式とsubdomain方式をmodeフラグで切り替える形に再設計する。呼び出し側は`resolver.url_for(...)`を呼ぶだけになり、影響範囲は三モジュールに広がるが判定ロジックの重複は解消される。",
       "hunks": ["h079", "h080", "h081"],
       "hunk_intents": {
-        "h080": "このハンク固有の意図(紫)。このハンクだけで何を狙って変えたか。グループ全体のintentとは別に、この差分片の目的を一言で。"
+        "h080": "このハンク固有の意図(紫)。グループ全体のintentとは別に、この差分片の目的を一言で。"
       },
       "code_notes": {
         "h080:142": "コード解説(緑)。142行目: `resolver.url_for`はmode→builder関数の辞書を引き、該当がなければlegacy builderにfallbackして絶対URLを返す。(行キーなのでこの行の直下にインライン表示)"
       },
       "hunk_notes": {
-        "h080": "解説(青)。なぜこう変えたか・非自明な点。modeフラグの判定をここで一度だけ行い結果をキャッシュしている。呼び出しごとに環境変数を読むとhot pathで無視できないコストになるため。`nil`のときにlegacy扱いになる点が後方互換の要で、明示的にfalseと区別している。(ハンク全体の話なのでハンクキー)"
-      },
-      "findings": {
-        "h081:88": "指摘(赤)。88行目: この分岐は境界値でnilが渡り得る。行キーなのでPR送信時に88行目へ正確にアンカーされる。",
-        "h081:95": "指摘(赤)。95行目: 別の問題。1ハンク内の複数指摘は行ごとに分ける。"
-      },
-      "unclear": {
-        "h082": "要改善(アンバー)。行が特定できない/ハンク全体にかかる話はハンクキーでよい。改善余地がある、または変更の意図が差分とリポジトリから読み取れない箇所。"
+        "h080": "解説(青)。なぜこう変えたか・非自明な点。modeフラグの判定を一度だけ行いキャッシュしている理由など。"
       }
     },
     {
@@ -127,279 +111,93 @@ Write `<workdir>/explanations.json`:
 }
 ```
 
-**解説量レベル (`--detail`)** — extract 出力の "detail level" に従って解説系
-(hunk_intents / code_notes / hunk_notes) の分量を調整する。指摘/要改善
-(findings/unclear) は「言うべきことは言う」ものなのでレベルの影響を受けない
-（small でも重要な指摘は必ず出す）。
+**解説量レベル (`--detail`)**:
 
-- **small** — 要点のみ。グループ `intent` は 1〜2 文。hunk 単位の解説は
-  *本当に非自明な箇所だけ* に絞り、多くの hunk は無注釈でよい。1 注釈は
-  1 文程度。「読めば分かる」変更は書かない。
-- **medium**（既定）— バランス重視。`intent` は 3〜5 文（§ intent の指針
-  どおり）。非自明な hunk には 2〜4 文の解説を付ける。自明な hunk は省略。
-- **large** — 手厚く。`intent` を厚めに書き、変更のある hunk はできるだけ
-  意図・コード解説・解説を付け、設計判断・境界条件・代替案・影響範囲まで
-  踏み込む。学習/引き継ぎ目的に向く。ただし large でも自明な 1 行 hunk を
-  無理に膨らませない（水増しは全レベル共通で avoid）。
+- **small** — 要点のみ。`intent` 1〜2 文、hunk 解説は本当に非自明な箇所だけ。
+- **medium**（既定）— `intent` 3〜5 文、非自明な hunk に 2〜4 文。自明は省略。
+- **large** — 手厚く。設計判断・境界条件・代替案・影響範囲まで。ただし自明な
+  hunk を無理に膨らませない（水増しは全レベルで avoid）。
 
-**生成物・lock ファイルは解説しない** — extract で `(generated — 解説不要)`
-と付いた hunk（lockfile・vendored deps・ビルド生成物・生成コード）には
-意図・コード解説・解説を **付けない**。差分としてページには出るが、注釈は
-不要。これらは低リスクグループ（例「依存の更新」「生成物」）に `tags:
-["deps"]` や `["generated"]` でまとめ、`intent` に「lock ファイルの機械的
-更新」等の一言だけ添えれば十分。findings/unclear も、生成物に実質的な
-レビュー価値がある稀なケースを除き付けない。判定は extract のマークに従う
-（自分でパスを再判定しなくてよい）。
+**生成物・lock ファイルは解説しない** — `(generated — 解説不要)` の hunk には
+注釈を付けない。低リスクグループ（`tags: ["deps"]` 等）にまとめ `intent` に
+一言添えれば十分。判定は extract のマークに従う。
 
 Field guidance:
 
-- **risk**: `high` (要注意) = behavior changes, security/auth boundaries,
-  concurrency, data migration — anything where a bug is expensive. `medium`
-  (注意) = broad but mechanical changes worth a scan. `low` (低リスク) =
-  docs, generated files, pure renames. Judge by consequence of a mistake,
-  not by line count.
-- **tags**: 1–2 short lowercase words (`core`, `refactor`, `docs`, `test`,
-  `deps`, `config`). They render as mono pills in the overview.
-- **intent** answers: なぜこの変更か、どういう設計判断か、影響範囲はどこまでか。
-  各グループで最低でも 3〜5 文（目安 150〜300 字）書き、次を順に埋める:
-  (1) この変更が解こうとしている問題・背景、(2) 採った設計・実装アプローチと
-  その理由、(3) 影響範囲（呼び出し側・データ・互換性・パフォーマンス）、
-  (4) 検討したが採らなかった代替案や既知のトレードオフがあれば。箇条書きで
-  構造化してよい。Markdown subset available: paragraphs, bullets, `code`,
-  **bold**, fenced blocks. 憶測は「〜と思われる」と明示する。要約で済ませず、
-  レビュアーがそのグループのコードを読まなくても判断の土台が分かる密度を目指す。
-- **ハンク単位の注釈は3種ある**。同じハンクに複数付けてよいが、内容は
-  役割で書き分け、重複させない。表示順は 意図 → コード解説 → 解説。
-  - **hunk_intents** (意図, purple) — そのハンク *固有* の変更意図。「この
-    差分片で何を狙ったか」を 1〜2 文で。グループの `intent` が全体を語るのに
-    対し、これは 1 ハンクの目的にズームインする。グループに 1 ハンクしか
-    なく intent と重複するなら省略してよい。
-  - **code_notes** (コード解説, green) — 変更 *後* のコードが実際に何を
-    しているかの読解補助。レビュー観点（良し悪し）ではなく、処理の流れ・
-    データの動き・戻り値を淡々と説明する。非自明なアルゴリズムや読みづらい
-    式があるハンクで有効。自明なコードには付けない。
-  - **hunk_notes** (解説, blue) — *why* と非自明な点。コードの言い換えでは
-    なく「なぜこう書いたか」「この行が何を保証/変えているか」「読み手が
-    誤解しやすい点」を 2〜4 文（目安 80〜200 字）で。関連ハンクや既存コード
-    との関係、境界条件、副作用にも触れる。
-  いずれも本当に自明なハンク（純粋なrename、import追加、フォーマットのみ）
-  には無理に付けず省略する（水増しは avoid）。密度を上げるのは「非自明さ」が
-  ある箇所に限る。code_notes が「何を」、hunk_notes が「なぜ」、hunk_intents
-  が「その一片の狙い」— この住み分けを守る。
-- **findings** (指摘, red) are things the author should act on or
-  consciously accept: bugs, missing invalidation, boundary conditions,
-  behavior changes that need a call-out, docs claiming completion of
-  unfinished work. Only raise findings you'd stand behind in a real review
-  — the header counts them, so noise erodes trust. A hunk can have both a
-  finding and a note.
-- **unclear** (要改善, amber) marks two things: changes with clear room for
-  improvement that fall short of a definite problem, and — importantly —
-  changes whose *intent you cannot determine* from the diff and the repo.
-  Never paper over an unintelligible change with a plausible-sounding
-  explanation; marking it 要改善 ("この変更の意図が読み取れません。〜のため
-  であれば問題ありませんが確認を推奨") is the honest and more useful output.
-- **注釈は行単位で付けられる**。5 種すべて（hunk_intents / code_notes /
-  findings / unclear / hunk_notes）のキーは、ハンク全体を指す `"h012"` と、
-  ハンク内の特定行を指す `"h012:58"`（58 = **新側 (RIGHT) の行番号**）の
-  両方を取れる。
-  - 行キーを使うと、その注釈は diff テーブルの **その行の直下にインライン
-    表示** される（GitHub の行コメントと同じ見え方）。指摘は「どの行の話か」
-    が一目で分かるので、**可能な限り行キーで付ける**こと。ハンクに問題が
-    複数あるなら `"h012:58"` と `"h012:63"` のように行ごとに分けて書く。
-  - findings/unclear を行キーで付けると、PR 送信時に **その行に正確に
-    アンカー** される（§6）。ハンクキー（行指定なし）の場合は代表行に
-    フォールバックする。
-  - 行番号は必ず extract 出力の diff に実在する新側行にすること。存在しない
-    行を指定すると render がハンク単位にフォールバックし、stderr に警告を
-    出す。行番号が分からないときはハンクキーにする。
-  - ハンク全体にかかる話（設計意図など）はハンクキー、特定行の話は行キー、
-    と使い分ける。
-- **Display order is risk order**: the renderer stable-sorts groups
-  high → medium → low, so a reviewer always meets the dangerous changes
-  first. Your authored order is preserved within the same risk level — use
-  it to put the conceptual core before its dependents. 同一行内の複数注釈は
-  意図 → コード解説 → 指摘 → 要改善 → 解説 の順で表示される。
-- **Language**: match the user's language (この文脈ではほぼ日本語).
-- Hunk ids must come from the extract output. Each id should appear in at
-  most one group. 行キー (`h012:58`) の行番号も extract 出力の diff に
-  実在する新側行から取ること。
+- **risk**: `high`=挙動変更・境界・並行・移行、`medium`=広いが機械的、
+  `low`=docs・生成物・rename。誤りの結果の重大さで判断する（行数ではない）。
+- **tags**: 1–2 語 (`core`, `refactor`, `docs`, `test`, `deps`, `config`).
+- **intent**: なぜこの変更か・設計判断・影響範囲。3〜5 文で (1) 問題・背景
+  (2) アプローチと理由 (3) 影響範囲 (4) 代替案/トレードオフ。憶測は明示する。
+- **ハンク単位の解説は3種**（同じハンクに複数可、役割で書き分け重複させない。
+  表示順 意図 → コード解説 → 解説）:
+  - **hunk_intents** (意図, purple) — そのハンク固有の変更意図を 1〜2 文。
+  - **code_notes** (コード解説, green) — 変更後コードが何をしているか（処理の
+    流れ・データの動き・戻り値）。
+  - **hunk_notes** (解説, blue) — why と非自明な点を 2〜4 文。
+  自明なハンク（rename・import 追加・フォーマットのみ）には付けない。
+- **注釈は行単位で付けられる**。3 種すべてキーはハンク全体 `"h012"` と特定行
+  `"h012:58"`（58 = 新側 RIGHT 行番号）の両対応。行キーはその行の直下に
+  インライン表示。「どの行の話か」が明確になるので可能な限り行キーで。行番号は
+  extract に実在する新側行のみ（無ければハンク単位にフォールバック+警告）。
+- **Display order is risk order**（high → medium → low で安定ソート）。
+- **Language**: match the user's language (ほぼ日本語).
 
-### 4. 忖度対策: two-stage review (when a plan/spec exists)
-
-（解説のみモード `--no-review` を使う場合は指摘を出さないので、この節は
-スキップしてよい。）
-
-If the change was implemented from a plan, spec, or instructions that are
-visible to you (in context, in the repo, or provided by the user), there is
-a known failure mode: reviewing against the plan makes you excuse mediocre
-implementation with "planに則っているのでOK". Counter it by reviewing in two
-stages:
-
-1. **Blind pass** — review the diff *without consulting the plan*, judging
-   the code purely on its own merits: correctness, boundary conditions,
-   design, naming. In Claude Code, prefer spawning a subagent that receives
-   only `raw.diff` (plus repo read access) and no plan, and returns its
-   findings. Without subagents, write your blind findings down *before*
-   (re)reading the plan.
-2. **Plan-aware pass** — now compare against the plan: does the diff cover
-   it, deviate from it, or silently skip parts of it? Add plan-dependent
-   findings ("planではXも対象だが未実装").
-
-Merge the two: blind findings survive even when the plan justifies the
-implementation — note the justification in the finding text ("plan上は
-意図通りだが、〜の懸念は残る") rather than deleting the finding. Plan-only
-findings (things only detectable by reading the plan) stay too.
-
-For small diffs with no plan in play, a single pass is fine — don't
-manufacture ceremony.
-
-### 5. Render and open
-
-```bash
-python <skill-path>/scripts/build_diff_page.py render --workdir <workdir>
-```
-
-**解説のみモード (`--no-review`)**: ユーザーが「レビュー（指摘）はいらない、
-解説だけ」と言ったときは `--no-review` を付ける。AI の 指摘/要改善
-(findings/unclear) を一切描画せず、解説系 (意図/コード解説/解説)・人間の
-コメント欄・PR 送信はそのまま残す。指摘/要改善のカウントやバッジ、AI 指摘の
-送信チェックボックスも消える。この場合 explanations.json に findings/unclear
-を書いても無視されるので、そもそも書かなくてよい（書く手間を省ける）。
+### 4. Render and open
 
 ```bash
 python <skill-path>/scripts/build_diff_page.py render --workdir <workdir> --no-review
 ```
 
-判断の目安: 「差分を解説して」「何を変えたか説明して」のような**理解目的**の
-依頼はしばしば解説のみで十分。「レビューして」「問題ないか見て」のような
-**評価目的**の依頼はレビューあり（デフォルト）。迷ったらユーザーに一言確認する。
+**必ず `--no-review` を付ける**（このスキルの肝）。findings/unclear を描画
+せず、指摘/要改善のカウント・バッジ・AI 送信チェックボックスも出さない。解説
+系・人間コメント欄・PR 送信は残る。
 
 It prints the path to `diff_review.html`. Open it:
 
 - macOS: `open <path>` / Linux with display: `xdg-open <path>`
 - No display / Claude.ai container: present the HTML file to the user
-  directly instead, and mention it works offline.
+  directly and mention it works offline.
 
-Then give a short recap in chat (2–4 sentences): the shape of the change,
-which group to review first, and the findings count if any.
+Then give a short recap in chat (2–4 sentences): the shape of the change and
+where to start reading.
 
-### 6. GitHub PR にレビューを送信する（branch モードのみ）
+### 5. 人間コメントを GitHub PR に送る（branch モードのみ、任意）
 
-`branch` モードで生成したページには「PR送信用にコピー」ボタンと、末尾に
-**03 / PRレビューを送信** パネル（判定ラジオ + 全体コメント欄）がある。人間は
-行コメント・ハンクコメントを書き、送りたい AI 指摘にチェックを付け、判定を
-APPROVE / REQUEST_CHANGES / COMMENT から選び、ボタンで **送信用 JSON** を
-クリップボードにコピーする。その JSON を作業セッションに貼って「PR に送って」と
-依頼されたら、あなたが `gh` で GitHub PR レビューとして投稿する。
+解説ページでも人間が行/範囲/ハンクにコメントを残せる。それを PR に送りたいと
+言われたら、ページの「PR送信用にコピー」でコピーされた JSON（解説専用なので
+`author` は human のみ）を使って送る。手順は diff-review スキルと同じ:
 
-コピーされる JSON の形:
-
-```json
-{
-  "event": "REQUEST_CHANGES",
-  "body": "レビュー全体のサマリー（任意）",
-  "comments": [
-    { "path": "app/foo.rb", "line": 42, "side": "RIGHT",
-      "body": "人間が書いた行コメント", "author": "human" },
-    { "path": "app/foo.rb", "line": 58, "side": "RIGHT",
-      "body": "🤖 Claude (指摘): nullチェックが抜けている", "author": "ai" }
-  ],
-  "_context": { "head": "feature-x", "base": "main", "mode": "branch",
-                "title": "...", "counts": { "human": 1, "ai": 1 },
-                "skipped_hunks": [] }
-}
+```bash
+gh pr view <head-branch> --json number -q '.number'
+gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews \
+  --method POST --input <(jq 'del(._context) | .comments |= map(del(.author))' review.json)
 ```
 
-- コメントのソースは **3 つ**、いずれも `author` で区別される:
-  1. 各行の「＋」で付けた **行コメント**（その行に紐づく、author=human）
-  2. ハンク末尾の **ハンクコメント欄**（ハンク代表行に紐づく、author=human）
-  3. **AI の指摘・要改善** のうち「PRに送る」にチェックされたもの
-     （author=ai、本文に `🤖 Claude (指摘|要改善):` prefix 付き）。行キーで
-     付けた指摘は **その行に正確にアンカー**、ハンクキーの指摘は代表行に
-     アンカーされる。デフォルト送信 ON なので、人間が不要な指摘のチェックを
-     外して取捨選択する。
-- GitHub は投稿アカウントを偽装できないため、AI/人間の区別は **本文の
-  prefix のみ**（`author` フィールドは送信前に落とす、下記参照）。
-- 行コメント・行キー AI 指摘の `line`/`side` はその行の新側行番号・RIGHT。
-  ハンクコメント・ハンクキー AI 指摘の `line`/`side` は代表行（新側の最終
-  追加行を優先、なければ文脈行、それも無ければ旧側の削除行）に自動で対応
-  づけられている。
-- `_context.skipped_hunks` にハンク id が入っていたら、そのハンクは行を
-  特定できずコメントを落としている。ユーザーに知らせ、必要なら PR 全体
-  コメント（`body`）へ回すか手動対応を促すこと。
-
-送信手順:
-
-1. PR 番号を特定する。`_context.head` を使う:
-   ```bash
-   gh pr view <head-branch> --json number,url -q '.number'
-   ```
-   見つからなければ「その branch に対応する open PR が無い」旨を伝え、勝手に
-   PR を作らない。
-2. JSON を GitHub API 用に整形する。`_context` と各コメントの `author`
-   （送信には不要なメタ情報）を落としてから渡す:
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews \
-     --method POST --input <(jq 'del(._context) |
-       .comments |= map(del(.author))' review.json)
-   ```
-   `{owner}/{repo}` は `gh repo view --json nameWithOwner -q .nameWithOwner`
-   で解決できる。
-3. **送信は破壊的で外向きの操作**。実行前に「PR #N に event=<...>、人間 H 件 /
-   AI A 件のコメントを送信します」と `_context.counts` を使って要約し、
-   ユーザーの承認を得てから叩く。APPROVE / REQUEST_CHANGES は特に、明示的な
-   確認を取る。
-4. 送信後、返ってきたレビュー URL をユーザーに提示する。
-
-`comments` が空で `event` が COMMENT のとき、GitHub は body 必須。空レビューに
-ならないよう、その場合は body を促すか送信を見送る。
+**送信は破壊的で外向きの操作**。件数と event を要約しユーザーの承認を得てから
+叩く。行/範囲コメントはその行/範囲、ハンクコメントは代表行にアンカーされる。
 
 ## The generated page
 
-So you can answer questions about it: a sticky header shows a DIFF REVIEW
-label, the title, `N files / M hunks +A −D`, an approval progress bar
-(承認 X/Y), a まとめをコピー button, and a "?" button with a legend. Section
-01 lists the groups in risk order — left border colored by risk
-(red/amber/gray), description, tags, hunk count, 指摘/要改善 counts — each
-linking to its detail card in section 02. 対象行の下のメタ行に、対象範囲・
-生成日時・**解説量レベル (small/medium/large)**・指摘/要改善件数が出る。
-Detail cards have the risk badge, 意図, and a 確認して承認 checkbox. Hunks
-render with their id, file path, `@@` range, two line-number columns, and
-intraline highlighting of changed spans; lockfile/生成物の hunk はヘッダーに
-`generated` バッジが付く（解説対象外の目印）。 Annotation boxes render in a fixed order — 意図 (purple, hunk-level
-intent), コード解説 (green, what the code does), 指摘 (red), 要改善 (amber),
-解説 (blue, why). 行キー (`h012:58`) で付けた注釈は該当行の **直下に
-インライン表示**、ハンクキー (`h012`) の注釈はハンクの下にまとめて表示される。
-最後に free-text コメント欄（ハンクごと・グループごと）が続く。
+A sticky header shows a DIFF REVIEW label, the title, `N files / M hunks
++A −D`, an approval progress bar, a まとめをコピー button, a PR送信用にコピー
+button (branch mode), and a "?" legend. Section 01 lists groups in risk
+order; a meta line shows 対象範囲・生成日時・解説量レベル. Section 02 has
+detail cards with the risk badge, 意図, a 確認して承認 checkbox, and the
+hunks. Annotation boxes: 意図 (purple), コード解説 (green), 解説 (blue) —
+行キーの注釈は該当行の直下にインライン表示。**指摘 (red)・要改善 (amber) は
+このスキルでは出ない。**
 
-**行コメント**: diff の各行（追加行・文脈行 = RIGHT 側）にホバーすると左端に
-「＋」ボタンが出る。押すとその行の直下にインラインでコメント欄が開き、GitHub
-の PR 画面と同じ感覚で特定の行にコメントを残せる。1 行に複数コメント可、各欄に
-「削除」ボタンあり。書いた内容は行番号・side に紐づいて localStorage に保存
-され、リロード時に該当行の下へ復元される。削除行 (LEFT 側) と meta 行には
-コメントを付けられない。
+**行コメント・範囲コメント**: 各行（RIGHT 側）にホバーで「＋」、または **行
+番号列をドラッグ**で複数行を範囲選択してコメントできる。1 行/範囲に複数コメ
+ント可、localStorage に保存・復元。範囲は `start_line`〜`line` で PR 送信。
 
-For `branch`-mode diffs the header also shows a **PR送信用にコピー** button,
-and a **03 / PRレビューを送信** panel at the foot carries the APPROVE /
-REQUEST_CHANGES / COMMENT radio and an overall-body box (see §6). 行コメントは
-その行そのものへ、ハンク末尾のコメント欄はハンク代表行へ紐づいて送信 JSON の
-`comments[]` に入る。branch モードでは各 指摘/要改善 の下に「PRに送る」
-チェックボックス（既定 ON）が出て、チェックしたものが author=ai の行コメント
-として（本文に 🤖 Claude prefix 付きで）送信対象に加わる。人間はこれで AI 指摘
-を取捨選択できる。チェック状態も localStorage に保存される。
-
-The **まとめをコピー** button assembles a Markdown summary — all 指摘 and
-要改善 with hunk ids and file paths, every comment the human wrote in the
-boxes, and the list of unapproved groups — and puts it on the clipboard,
-ready to paste back into the working session (e.g. the Claude Code session
-that produced the change) as actionable feedback. Approval state and
-comments persist in localStorage, keyed by title + merge-base. When you
-hand over the page, mention this button — it's the return path of the
-review loop.
+The **まとめをコピー** button assembles a Markdown summary of the human's
+comments and unapproved groups. State persists in localStorage, keyed by
+title + merge-base.
 
 ## Iterating
 
-If the user asks to refine ("この指摘もう少し詳しく", "グループ分け直して"),
-edit `explanations.json` in the same workdir and re-run `render` — no need
-to re-extract unless the code changed. Note that regrouping changes group
-indices, which resets saved approval checkboxes for that page.
+Edit `explanations.json` in the same workdir and re-run `render --no-review`
+— no need to re-extract unless the code changed. Regrouping resets saved
+approval checkboxes.
