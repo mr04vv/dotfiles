@@ -57,6 +57,7 @@
       "ngrok"               # Tunnel service
       "flux-app"            # Blue light filter (f.lux)
       "hammerspoon"         # Automation tool
+      "codexbar"            # Menu bar usage monitor for Codex/Claude
     ];
 
     # CLI tools via Homebrew (if not available in nixpkgs)
