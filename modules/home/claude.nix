@@ -20,6 +20,9 @@
     # _shared is a source-only dir (holds the diff-page script shared by
     # diff-explain and diff-review); it is not a skill, so drop it from the
     # deployed skills tree and fan the script out into each skill's scripts/.
+    # chmod first: files copied from the nix store are read-only, and macOS
+    # rm refuses to remove read-only files.
+    chmod -R u+w ${config.home.homeDirectory}/.claude/skills/_shared 2>/dev/null || true
     rm -rf ${config.home.homeDirectory}/.claude/skills/_shared
     for skill in diff-explain diff-review; do
       mkdir -p ${config.home.homeDirectory}/.claude/skills/$skill/scripts
