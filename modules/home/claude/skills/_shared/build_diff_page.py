@@ -398,12 +398,16 @@ def render_hunk(hunk, file_path, line_annots=None, generated=False):
                      f' data-cline="{ln["new"]}" data-cside="RIGHT"')
             btn = ('<button class="addcmt" title="この行にコメント" '
                    'onclick="toggleLineComment(this)">+</button>')
+            # the new-side line-number cell is a drag handle for range select
+            new_ln_cell = (f'<td class="ln lnum" data-lnum="{ln["new"]}">'
+                           f'{new}</td>')
         else:
             attrs = ""
             btn = ""
+            new_ln_cell = f'<td class="ln">{new}</td>'
         rows.append(
             f'<tr class="{t}"{attrs}><td class="ln">{old}</td>'
-            f'<td class="ln">{new}</td>'
+            f'{new_ln_cell}'
             f'<td class="code">{btn}<span class="sign">{sign}</span>'
             f'{code_html(ln)}</td></tr>'
         )
@@ -724,11 +728,20 @@ function bindComment(t) {
   });
 }
 document.querySelectorAll('.cmt').forEach(bindComment);
-// ---- per-line comments -------------------------------------------------
+// ---- per-line comments (single line or a multi-line range) -------------
 // A line comment lives in a textarea that is BOTH a .cmt (so it persists and
-// feeds the summary) and carries data-cpath/cline/cside so it can become a
-// GitHub review line comment. Key: line:<path>:<line>:<side>:<n>.
-function makeLineCommentRow(path, line, side, n, colspan) {
+// feeds the summary) and carries data-cpath/cline/cside (+ data-cstart for a
+// range) so it can become a GitHub review line comment. The comment anchors
+// to `cline` (the end line); a range additionally sends start_line=cstart.
+// Key: line:<path>:<line>:<side>:<n>. Range starts persist in RANGEKEY.
+var RANGEKEY = KEY + ':lineRanges';
+var lineRanges = (function () {
+  try { return JSON.parse(localStorage.getItem(RANGEKEY) || '{}'); }
+  catch (e) { return {}; }
+})();
+function makeLineCommentRow(path, line, side, n, colspan, startLine) {
+  startLine = (startLine == null) ? line : startLine;
+  var isRange = String(startLine) !== String(line);
   var tr = document.createElement('tr');
   tr.className = 'line-cmt-row';
   var td = document.createElement('td');
@@ -737,14 +750,16 @@ function makeLineCommentRow(path, line, side, n, colspan) {
   box.className = 'line-cmt-box';
   var meta = document.createElement('div');
   meta.className = 'line-cmt-meta';
-  meta.textContent = path + ':' + line + ' (' + side + ')';
+  meta.textContent = path + ':' + (isRange ? (startLine + '-' + line) : line)
+    + ' (' + side + ')';
   var del = document.createElement('button');
   del.className = 'line-cmt-del';
   del.textContent = '削除';
   var key = 'line:' + path + ':' + line + ':' + side + ':' + n;
   del.onclick = function () {
     delete comments[key];
-    persistComments();
+    delete lineRanges[key];
+    persistComments(); persistRanges();
     tr.parentNode.removeChild(tr);
   };
   var ta = document.createElement('textarea');
@@ -754,7 +769,8 @@ function makeLineCommentRow(path, line, side, n, colspan) {
   ta.dataset.cpath = path;
   ta.dataset.cline = line;
   ta.dataset.cside = side;
-  ta.placeholder = 'この行へのコメント…';
+  if (isRange) ta.dataset.cstart = startLine;
+  ta.placeholder = isRange ? 'この範囲へのコメント…' : 'この行へのコメント…';
   meta.appendChild(del);
   box.appendChild(meta);
   box.appendChild(ta);
@@ -763,27 +779,86 @@ function makeLineCommentRow(path, line, side, n, colspan) {
   bindComment(ta);
   return { tr: tr, ta: ta };
 }
-function toggleLineComment(btn) {
-  var row = btn.closest('tr');
-  var path = row.dataset.cpath, line = row.dataset.cline,
-      side = row.dataset.cside;
-  var colspan = row.children.length;
-  // find next free index for this line (allow multiple comments)
+function persistRanges() {
+  try { localStorage.setItem(RANGEKEY, JSON.stringify(lineRanges)); }
+  catch (e) {}
+}
+// insert a comment row under `endRow`, after any existing comment rows there
+function insertLineComment(endRow, path, line, side, startLine) {
+  var colspan = endRow.children.length;
   var n = 0;
   while (comments['line:' + path + ':' + line + ':' + side + ':' + n] != null)
     n++;
-  var made = makeLineCommentRow(path, line, side, n, colspan);
-  // insert after the last existing comment row for this line, else after row
-  var anchor = row;
-  while (anchor.nextSibling &&
-         anchor.nextSibling.classList &&
+  var made = makeLineCommentRow(path, line, side, n, colspan, startLine);
+  var anchor = endRow;
+  while (anchor.nextSibling && anchor.nextSibling.classList &&
          anchor.nextSibling.classList.contains('line-cmt-row')) {
     anchor = anchor.nextSibling;
   }
-  row.parentNode.insertBefore(made.tr, anchor.nextSibling);
+  endRow.parentNode.insertBefore(made.tr, anchor.nextSibling);
   comments[made.ta.dataset.key] = '';
+  if (startLine != null && String(startLine) !== String(line)) {
+    lineRanges[made.ta.dataset.key] = startLine;
+    persistRanges();
+  }
   made.ta.focus();
 }
+function toggleLineComment(btn) {
+  var row = btn.closest('tr');
+  insertLineComment(row, row.dataset.cpath, row.dataset.cline,
+                    row.dataset.cside);
+}
+// ---- drag selection on the new-side line-number column -----------------
+(function () {
+  var dragging = false, anchorLn = null, curRow = null;
+  function cells() { return document.querySelectorAll('td.lnum'); }
+  function clearSel() {
+    document.querySelectorAll('tr.range-sel').forEach(function (r) {
+      r.classList.remove('range-sel');
+    });
+  }
+  function paint(a, b, table) {
+    clearSel();
+    var lo = Math.min(a, b), hi = Math.max(a, b);
+    table.querySelectorAll('td.lnum').forEach(function (c) {
+      var v = parseInt(c.dataset.lnum, 10);
+      if (v >= lo && v <= hi) c.closest('tr').classList.add('range-sel');
+    });
+  }
+  document.addEventListener('mousedown', function (e) {
+    var cell = e.target.closest && e.target.closest('td.lnum');
+    if (!cell) return;
+    e.preventDefault();
+    dragging = true;
+    anchorLn = parseInt(cell.dataset.lnum, 10);
+    curRow = cell.closest('tr');
+    paint(anchorLn, anchorLn, cell.closest('table'));
+  });
+  document.addEventListener('mouseover', function (e) {
+    if (!dragging) return;
+    var cell = e.target.closest && e.target.closest('td.lnum');
+    if (!cell) return;
+    curRow = cell.closest('tr');
+    paint(anchorLn, parseInt(cell.dataset.lnum, 10), cell.closest('table'));
+  });
+  document.addEventListener('mouseup', function (e) {
+    if (!dragging) return;
+    dragging = false;
+    if (anchorLn == null || !curRow) { clearSel(); return; }
+    var endLn = parseInt(curRow.querySelector('td.lnum').dataset.lnum, 10);
+    var lo = Math.min(anchorLn, endLn), hi = Math.max(anchorLn, endLn);
+    // resolve the end row (the higher line number) as the comment anchor
+    var endRow = null, path = null, side = null;
+    document.querySelectorAll('tr[data-cline]').forEach(function (r) {
+      if (parseInt(r.dataset.cline, 10) === hi) {
+        endRow = r; path = r.dataset.cpath; side = r.dataset.cside;
+      }
+    });
+    clearSel();
+    if (!endRow) return;
+    insertLineComment(endRow, path, hi, side, lo === hi ? null : lo);
+  });
+})();
 // restore saved line comments: group keys by their target row, rebuild DOM
 (function () {
   var byRow = {};
@@ -795,7 +870,7 @@ function toggleLineComment(btn) {
     var path = parts.slice(1).join(':');
     (byRow[path + '\\u0000' + line + '\\u0000' + side] =
       byRow[path + '\\u0000' + line + '\\u0000' + side] || []).push(
-      { n: parseInt(n, 10), path: path, line: line, side: side });
+      { n: parseInt(n, 10), path: path, line: line, side: side, key: k });
   });
   Object.keys(byRow).forEach(function (rk) {
     var items = byRow[rk].sort(function (a, b) { return a.n - b.n; });
@@ -809,7 +884,8 @@ function toggleLineComment(btn) {
     var colspan = row.children.length;
     var anchor = row;
     items.forEach(function (it) {
-      var made = makeLineCommentRow(it.path, it.line, it.side, it.n, colspan);
+      var made = makeLineCommentRow(it.path, it.line, it.side, it.n, colspan,
+                                    lineRanges[it.key]);
       row.parentNode.insertBefore(made.tr, anchor.nextSibling);
       anchor = made.tr;
     });
@@ -854,7 +930,8 @@ function buildSummary() {
       var g = GROUP_META[parseInt(key.slice(6), 10)];
       label = 'グループ: ' + (g ? g.name : key);
     } else if (key.indexOf('line:') === 0) {
-      label = t.dataset.cpath + ':' + t.dataset.cline;
+      label = t.dataset.cpath + ':' + (t.dataset.cstart ?
+        t.dataset.cstart + '-' + t.dataset.cline : t.dataset.cline);
     } else if (key.indexOf('hunk:') === 0) {
       var hid = key.slice(5);
       label = hid + (HUNK_FILES[hid] ? ' ' + HUNK_FILES[hid] : '');
@@ -916,10 +993,15 @@ function buildReviewPayload() {
     var key = t.dataset.key;
     if (!t.value.trim()) return;
     if (key.indexOf('line:') === 0) {
-      comments.push({ path: t.dataset.cpath,
-                      line: parseInt(t.dataset.cline, 10),
-                      side: t.dataset.cside, body: t.value.trim(),
-                      author: 'human' });
+      var c = { path: t.dataset.cpath,
+                line: parseInt(t.dataset.cline, 10),
+                side: t.dataset.cside, body: t.value.trim(),
+                author: 'human' };
+      if (t.dataset.cstart) {           // multi-line range comment
+        c.start_line = parseInt(t.dataset.cstart, 10);
+        c.start_side = t.dataset.cside;
+      }
+      comments.push(c);
     } else if (key.indexOf('hunk:') === 0) {
       var hid = key.slice(5);
       var a = HUNK_ANCHORS[hid];
@@ -1110,6 +1192,10 @@ table.diff {{ width:100%; border-collapse:collapse; font-family:var(--mono);
 table.diff td {{ padding:0 9px; vertical-align:top; }}
 td.ln {{ width:1%; min-width:46px; text-align:right; color:#9aa1ac;
   user-select:none; border-right:1px solid #eef0f4; background:var(--card); }}
+td.ln.lnum {{ cursor:pointer; }}
+td.ln.lnum:hover {{ background:#dbe3f4; color:var(--accent); }}
+tr.range-sel td.code {{ background:#e0eaff; }}
+tr.range-sel td.ln {{ background:#cfddff; }}
 td.code {{ white-space:pre-wrap; word-break:break-all; position:relative; }}
 .sign {{ display:inline-block; width:13px; user-select:none;
   color:var(--muted); }}
