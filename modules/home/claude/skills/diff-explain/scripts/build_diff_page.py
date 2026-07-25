@@ -348,10 +348,20 @@ def render_hunk(hunk, file_path):
         old = "" if ln["old"] is None else ln["old"]
         new = "" if ln["new"] is None else ln["new"]
         sign = {"add": "+", "del": "-", "ctx": " "}[t]
+        # RIGHT-side lines (add/ctx) can carry an inline line comment.
+        addable = t in ("add", "ctx") and ln["new"] is not None
+        if addable:
+            attrs = (f' data-cpath="{html.escape(file_path, quote=True)}"'
+                     f' data-cline="{ln["new"]}" data-cside="RIGHT"')
+            btn = ('<button class="addcmt" title="この行にコメント" '
+                   'onclick="toggleLineComment(this)">+</button>')
+        else:
+            attrs = ""
+            btn = ""
         rows.append(
-            f'<tr class="{t}"><td class="ln">{old}</td>'
+            f'<tr class="{t}"{attrs}><td class="ln">{old}</td>'
             f'<td class="ln">{new}</td>'
-            f'<td class="code"><span class="sign">{sign}</span>'
+            f'<td class="code">{btn}<span class="sign">{sign}</span>'
             f'{code_html(ln)}</td></tr>'
         )
     header = hunk["header"]
@@ -562,14 +572,108 @@ var comments = (function () {
   try { return JSON.parse(localStorage.getItem(CKEY) || '{}'); }
   catch (e) { return {}; }
 })();
-document.querySelectorAll('.cmt').forEach(function (t) {
-  if (comments[t.dataset.key]) t.value = comments[t.dataset.key];
+function persistComments() {
+  try { localStorage.setItem(CKEY, JSON.stringify(comments)); } catch (e) {}
+}
+function bindComment(t) {
+  if (comments[t.dataset.key] != null) t.value = comments[t.dataset.key];
   t.addEventListener('input', function () {
     comments[t.dataset.key] = t.value;
-    try { localStorage.setItem(CKEY, JSON.stringify(comments)); }
-    catch (e) {}
+    persistComments();
   });
-});
+}
+document.querySelectorAll('.cmt').forEach(bindComment);
+// ---- per-line comments -------------------------------------------------
+// A line comment lives in a textarea that is BOTH a .cmt (so it persists and
+// feeds the summary) and carries data-cpath/cline/cside so it can become a
+// GitHub review line comment. Key: line:<path>:<line>:<side>:<n>.
+function makeLineCommentRow(path, line, side, n, colspan) {
+  var tr = document.createElement('tr');
+  tr.className = 'line-cmt-row';
+  var td = document.createElement('td');
+  td.colSpan = colspan;
+  var box = document.createElement('div');
+  box.className = 'line-cmt-box';
+  var meta = document.createElement('div');
+  meta.className = 'line-cmt-meta';
+  meta.textContent = path + ':' + line + ' (' + side + ')';
+  var del = document.createElement('button');
+  del.className = 'line-cmt-del';
+  del.textContent = '削除';
+  var key = 'line:' + path + ':' + line + ':' + side + ':' + n;
+  del.onclick = function () {
+    delete comments[key];
+    persistComments();
+    tr.parentNode.removeChild(tr);
+  };
+  var ta = document.createElement('textarea');
+  ta.className = 'cmt line-cmt';
+  ta.rows = 2;
+  ta.dataset.key = key;
+  ta.dataset.cpath = path;
+  ta.dataset.cline = line;
+  ta.dataset.cside = side;
+  ta.placeholder = 'この行へのコメント…';
+  meta.appendChild(del);
+  box.appendChild(meta);
+  box.appendChild(ta);
+  td.appendChild(box);
+  tr.appendChild(td);
+  bindComment(ta);
+  return { tr: tr, ta: ta };
+}
+function toggleLineComment(btn) {
+  var row = btn.closest('tr');
+  var path = row.dataset.cpath, line = row.dataset.cline,
+      side = row.dataset.cside;
+  var colspan = row.children.length;
+  // find next free index for this line (allow multiple comments)
+  var n = 0;
+  while (comments['line:' + path + ':' + line + ':' + side + ':' + n] != null)
+    n++;
+  var made = makeLineCommentRow(path, line, side, n, colspan);
+  // insert after the last existing comment row for this line, else after row
+  var anchor = row;
+  while (anchor.nextSibling &&
+         anchor.nextSibling.classList &&
+         anchor.nextSibling.classList.contains('line-cmt-row')) {
+    anchor = anchor.nextSibling;
+  }
+  row.parentNode.insertBefore(made.tr, anchor.nextSibling);
+  comments[made.ta.dataset.key] = '';
+  made.ta.focus();
+}
+// restore saved line comments: group keys by their target row, rebuild DOM
+(function () {
+  var byRow = {};
+  Object.keys(comments).forEach(function (k) {
+    if (k.indexOf('line:') !== 0) return;
+    // line:<path>:<line>:<side>:<n> — path may contain ':'? split from right
+    var parts = k.split(':');
+    var n = parts.pop(), side = parts.pop(), line = parts.pop();
+    var path = parts.slice(1).join(':');
+    (byRow[path + '\\u0000' + line + '\\u0000' + side] =
+      byRow[path + '\\u0000' + line + '\\u0000' + side] || []).push(
+      { n: parseInt(n, 10), path: path, line: line, side: side });
+  });
+  Object.keys(byRow).forEach(function (rk) {
+    var items = byRow[rk].sort(function (a, b) { return a.n - b.n; });
+    var first = items[0];
+    var sel = 'tr[data-cpath="' + (window.CSS && CSS.escape ?
+      CSS.escape(first.path) : first.path) + '"][data-cline="' +
+      first.line + '"][data-cside="' + first.side + '"]';
+    var row;
+    try { row = document.querySelector(sel); } catch (e) { row = null; }
+    if (!row) return;
+    var colspan = row.children.length;
+    var anchor = row;
+    items.forEach(function (it) {
+      var made = makeLineCommentRow(it.path, it.line, it.side, it.n, colspan);
+      row.parentNode.insertBefore(made.tr, anchor.nextSibling);
+      anchor = made.tr;
+    });
+  });
+})();
 function toast(msg) {
   var el = document.getElementById('toast');
   el.textContent = msg;
@@ -594,9 +698,13 @@ function buildSummary() {
     if (key.indexOf('group:') === 0) {
       var g = GROUP_META[parseInt(key.slice(6), 10)];
       label = 'グループ: ' + (g ? g.name : key);
-    } else {
+    } else if (key.indexOf('line:') === 0) {
+      label = t.dataset.cpath + ':' + t.dataset.cline;
+    } else if (key.indexOf('hunk:') === 0) {
       var hid = key.slice(5);
       label = hid + (HUNK_FILES[hid] ? ' ' + HUNK_FILES[hid] : '');
+    } else {
+      label = key;
     }
     cmtLines.push('- [' + label + '] ' + t.value.trim());
   });
@@ -642,17 +750,24 @@ function selectedEvent() {
   return r ? r.value : 'COMMENT';
 }
 function buildReviewPayload() {
-  // line comments come ONLY from what the human wrote in per-hunk boxes
+  // Line comments map to their exact line. Hunk-level comment boxes fall back
+  // to the hunk's representative line. Both become GitHub review comments.
   var comments = [];
   var skipped = [];
   document.querySelectorAll('.cmt').forEach(function (t) {
     var key = t.dataset.key;
-    if (key.indexOf('hunk:') !== 0 || !t.value.trim()) return;
-    var hid = key.slice(5);
-    var a = HUNK_ANCHORS[hid];
-    if (!a) { skipped.push(hid); return; }
-    comments.push({ path: a.path, line: a.line, side: a.side,
-                    body: t.value.trim() });
+    if (!t.value.trim()) return;
+    if (key.indexOf('line:') === 0) {
+      comments.push({ path: t.dataset.cpath,
+                      line: parseInt(t.dataset.cline, 10),
+                      side: t.dataset.cside, body: t.value.trim() });
+    } else if (key.indexOf('hunk:') === 0) {
+      var hid = key.slice(5);
+      var a = HUNK_ANCHORS[hid];
+      if (!a) { skipped.push(hid); return; }
+      comments.push({ path: a.path, line: a.line, side: a.side,
+                      body: t.value.trim() });
+    }
   });
   var event = selectedEvent();
   var body = (document.getElementById('review-body') || {}).value || '';
@@ -816,7 +931,7 @@ table.diff {{ width:100%; border-collapse:collapse; font-family:var(--mono);
 table.diff td {{ padding:0 9px; vertical-align:top; }}
 td.ln {{ width:1%; min-width:46px; text-align:right; color:#9aa1ac;
   user-select:none; border-right:1px solid #eef0f4; background:var(--card); }}
-td.code {{ white-space:pre-wrap; word-break:break-all; }}
+td.code {{ white-space:pre-wrap; word-break:break-all; position:relative; }}
 .sign {{ display:inline-block; width:13px; user-select:none;
   color:var(--muted); }}
 tr.add td.code {{ background:var(--add-bg); }}
@@ -826,6 +941,22 @@ tr.del td.ln {{ background:var(--del-ln); }}
 tr.del .hl {{ background:var(--hl-del); border-radius:3px; }}
 tr.add .hl {{ background:var(--hl-add); border-radius:3px; }}
 tr.meta td.code {{ color:var(--muted); font-style:italic; }}
+/* ---- per-line comment ---- */
+.addcmt {{ position:absolute; left:-11px; top:50%;
+  transform:translateY(-50%); width:20px; height:20px; padding:0;
+  border:none; border-radius:6px; background:var(--accent); color:#fff;
+  font-size:15px; line-height:20px; cursor:pointer; opacity:0;
+  transition:opacity .12s; z-index:2; }}
+tr:hover .addcmt {{ opacity:1; }}
+.addcmt:hover {{ background:#1d4fd0; }}
+tr.line-cmt-row td {{ padding:0; background:var(--card); }}
+.line-cmt-box {{ margin:8px 12px 8px 52px; }}
+.line-cmt-box .line-cmt-meta {{ font-family:var(--mono); font-size:11.5px;
+  color:var(--muted); margin-bottom:4px; }}
+.line-cmt-box textarea {{ margin:0; }}
+.line-cmt-del {{ float:right; border:none; background:none; cursor:pointer;
+  color:var(--muted); font-size:12px; }}
+.line-cmt-del:hover {{ color:var(--red); }}
 /* ---- annotations ---- */
 .annot {{ display:flex; gap:12px; margin:10px 0 4px; border:1px solid;
   border-radius:10px; padding:10px 14px; font-size:13px; }}
