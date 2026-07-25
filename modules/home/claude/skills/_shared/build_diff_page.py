@@ -453,12 +453,18 @@ def note_html(text, kind="note", sendable=None):
     label, cls = ANNOT_KINDS[kind]
     check = ""
     if sendable:
-        # key must be unique per (hid, kind, line) so line-level annotations
-        # on the same hunk+kind don't collide in the send-toggle store.
-        # hunk-level sends carry scope="whole" to stay distinct from a
+        # key must be unique per (hid, kind, scope, start-line) so line-level
+        # annotations on the same hunk+kind don't collide in the send-toggle
+        # store. hunk-level sends carry scope="whole" to stay distinct from a
         # line-level send that happens to share the representative line.
         scope = sendable.get("scope", "line")
-        ck = f"ai:{sendable['hid']}:{kind}:{scope}:{sendable['line']}"
+        start = sendable.get("start_line")
+        span = f"{start}-{sendable['line']}" if start is not None \
+            else str(sendable["line"])
+        ck = f"ai:{sendable['hid']}:{kind}:{scope}:{span}"
+        start_attrs = (f' data-cstart="{start}"'
+                       f' data-cstartside="{sendable.get("start_side", "RIGHT")}"'
+                       if start is not None else "")
         check = (
             f'<label class="ai-send" title="このAIコメントをPRに送る">'
             f'<input type="checkbox" class="ai-send-cb" checked'
@@ -466,6 +472,7 @@ def note_html(text, kind="note", sendable=None):
             f' data-cpath="{html.escape(sendable["path"], quote=True)}"'
             f' data-cline="{sendable["line"]}"'
             f' data-cside="{sendable["side"]}"'
+            f'{start_attrs}'
             f' data-kind="{ANNOT_KINDS[kind][0]}"'
             f' data-body="{html.escape(text, quote=True)}"> PRに送る</label>')
     return (f'<div class="annot {cls}"><span class="annot-label">{label}'
@@ -497,13 +504,22 @@ def hunk_new_lines(hunk):
 
 
 def split_annot_key(key):
-    """An annotation key is either a bare hunk id ("h012") or hunk id + line
-    ("h012:58"). Returns (hid, line_or_None)."""
+    """An annotation key is one of:
+      "h012"        → bare hunk id
+      "h012:58"     → a single line
+      "h012:58-63"  → a line range (start-end, new-side)
+    Returns (hid, line_or_None, start_or_None) where `line` is the end line
+    (the anchor) and `start` is the range start (None for a single line)."""
     if ":" in key:
-        hid, _, lno = key.rpartition(":")
-        if lno.isdigit():
-            return hid, int(lno)
-    return key, None
+        hid, _, spec = key.rpartition(":")
+        if "-" in spec:
+            a, _, b = spec.partition("-")
+            if a.isdigit() and b.isdigit():
+                lo, hi = sorted((int(a), int(b)))
+                return hid, hi, lo
+        elif spec.isdigit():
+            return hid, int(spec), None
+    return key, None, None
 
 
 def cmd_render(args):
@@ -612,22 +628,25 @@ def cmd_render(args):
         group_meta.append({"name": g.get("name", "(無題)")})
 
         # organize this group's annotations per hunk into line-level and
-        # hunk-level buckets. Keys are "h012" or "h012:58".
-        hunk_line = {}   # hid -> {line -> [(kind, text)]}
+        # hunk-level buckets. Keys are "h012", "h012:58" or "h012:58-63".
+        hunk_line = {}   # hid -> {end_line -> [(kind, text, start_or_None)]}
         hunk_whole = {}  # hid -> [(kind, text)]
         for field, kind in ANNOT_FIELDS:
             for key, text in (g.get(field, {}) or {}).items():
-                hid, line = split_annot_key(key)
+                hid, line, start = split_annot_key(key)
                 if hid not in hmap:
                     continue
                 h, _f = hmap[hid]
                 if line is not None:
-                    if line not in hunk_new_lines(h):
+                    lines = hunk_new_lines(h)
+                    # both ends of a range must exist in the hunk
+                    ok = line in lines and (start is None or start in lines)
+                    if not ok:
                         key_warnings.append(key)
                         hunk_whole.setdefault(hid, []).append((kind, text))
                     else:
                         hunk_line.setdefault(hid, {}).setdefault(
-                            line, []).append((kind, text))
+                            line, []).append((kind, text, start))
                 else:
                     hunk_whole.setdefault(hid, []).append((kind, text))
 
@@ -640,15 +659,19 @@ def cmd_render(args):
             line_annots = {}
             for line, items in hunk_line.get(hid, {}).items():
                 out = []
-                for kind, text in items:
+                for kind, text, start in items:
                     sendable = None
                     if is_branch and kind in SENDABLE_KINDS:
                         sendable = {"hid": hid, "path": f["path"],
                                     "line": line, "side": "RIGHT"}
+                        if start is not None:
+                            sendable["start_line"] = start
+                            sendable["start_side"] = "RIGHT"
                     out.append((kind, text, sendable))
                     if kind in SENDABLE_KINDS:
+                        rng = f"{start}-{line}" if start is not None else line
                         copy_items.append({
-                            "id": f"{hid}:{line}", "file": f["path"],
+                            "id": f"{hid}:{rng}", "file": f["path"],
                             "kind": ANNOT_KINDS[kind][0], "text": text})
                 line_annots[line] = out
             hunks_html.append(render_hunk(h, f["path"], line_annots,
@@ -1015,13 +1038,18 @@ function buildReviewPayload() {
     if (!cb.checked) return;
     var raw = cb.dataset.body || '';
     if (!raw.trim()) return;
-    comments.push({
+    var c = {
       path: cb.dataset.cpath,
       line: parseInt(cb.dataset.cline, 10),
       side: cb.dataset.cside,
       body: AI_PREFIX + ' (' + cb.dataset.kind + '): ' + raw.trim(),
       author: 'ai'
-    });
+    };
+    if (cb.dataset.cstart) {           // AI range comment
+      c.start_line = parseInt(cb.dataset.cstart, 10);
+      c.start_side = cb.dataset.cstartside || 'RIGHT';
+    }
+    comments.push(c);
   });
   var event = selectedEvent();
   var body = (document.getElementById('review-body') || {}).value || '';
