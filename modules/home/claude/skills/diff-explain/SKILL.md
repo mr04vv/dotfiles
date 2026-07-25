@@ -238,10 +238,13 @@ GitHub PR レビューとして投稿する。
 }
 ```
 
-- 行コメントは **人間がハンクのコメント欄に書いたもの限定**。レビュー AI の
-  指摘（findings/unclear）は含まれない（それらは「まとめをコピー」の担当）。
-- `line`/`side` は各ハンクを代表する 1 行（新側の最終追加行を優先、なければ
-  文脈行、それも無ければ旧側の削除行）に自動で対応づけられている。
+- 行コメントは **人間が書いたもの限定**。レビュー AI の指摘（findings/
+  unclear）は含まれない（それらは「まとめをコピー」の担当）。ソースは 2 つ:
+  各行の「＋」で付けた **行コメント**（その行そのものに紐づく）と、ハンク末尾
+  の **ハンクコメント欄**（ハンク代表行に紐づく）。
+- 行コメントの `line`/`side` はその行の新側行番号・RIGHT。ハンクコメントの
+  `line`/`side` は代表行（新側の最終追加行を優先、なければ文脈行、それも
+  無ければ旧側の削除行）に自動で対応づけられている。
 - `_context.skipped_hunks` にハンク id が入っていたら、そのハンクは行を
   特定できずコメントを落としている。ユーザーに知らせ、必要なら PR 全体
   コメント（`body`）へ回すか手動対応を促すこと。
@@ -285,9 +288,18 @@ spans. Annotation boxes sit directly under their hunk in a fixed order —
 指摘 (red), 要改善 (amber), 解説 (blue, why) — followed by a free-text
 comment box (one per hunk, one per group).
 
+**行コメント**: diff の各行（追加行・文脈行 = RIGHT 側）にホバーすると左端に
+「＋」ボタンが出る。押すとその行の直下にインラインでコメント欄が開き、GitHub
+の PR 画面と同じ感覚で特定の行にコメントを残せる。1 行に複数コメント可、各欄に
+「削除」ボタンあり。書いた内容は行番号・side に紐づいて localStorage に保存
+され、リロード時に該当行の下へ復元される。削除行 (LEFT 側) と meta 行には
+コメントを付けられない。
+
 For `branch`-mode diffs the header also shows a **PR送信用にコピー** button,
 and a **03 / PRレビューを送信** panel at the foot carries the APPROVE /
-REQUEST_CHANGES / COMMENT radio and an overall-body box (see §6).
+REQUEST_CHANGES / COMMENT radio and an overall-body box (see §6). 行コメントは
+その行そのものへ、ハンク末尾のコメント欄はハンク代表行へ紐づいて送信 JSON の
+`comments[]` に入る。
 
 The **まとめをコピー** button assembles a Markdown summary — all 指摘 and
 要改善 with hunk ids and file paths, every comment the human wrote in the
