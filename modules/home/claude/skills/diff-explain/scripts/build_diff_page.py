@@ -187,6 +187,36 @@ def mark_intraline(lines):
 # ------------------------------------------------------------------- extract
 
 
+# files whose diffs almost never need prose explanation: dependency lockfiles,
+# vendored deps, build output, minified/generated bundles, snapshots, etc.
+GENERATED_PATTERNS = [
+    # lockfiles (deps are decided elsewhere; the lock is a mechanical result)
+    r"(^|/)package-lock\.json$", r"(^|/)pnpm-lock\.yaml$",
+    r"(^|/)yarn\.lock$", r"(^|/)npm-shrinkwrap\.json$",
+    r"(^|/)Cargo\.lock$", r"(^|/)poetry\.lock$", r"(^|/)Pipfile\.lock$",
+    r"(^|/)composer\.lock$", r"(^|/)Gemfile\.lock$", r"(^|/)flake\.lock$",
+    r"(^|/)go\.sum$", r"(^|/)pubspec\.lock$", r"(^|/)uv\.lock$",
+    r"(^|/)mix\.lock$", r"(^|/)packages\.lock\.json$",
+    r"(^|/)Podfile\.lock$", r"(^|/)deno\.lock$",
+    # vendored / installed deps
+    r"(^|/)node_modules/", r"(^|/)vendor/", r"(^|/)Pods/",
+    # build output / generated bundles
+    r"(^|/)dist/", r"(^|/)build/", r"(^|/)out/", r"(^|/)\.next/",
+    r"\.min\.(js|css)$", r"\.bundle\.js$",
+    r"(^|/)__snapshots__/", r"\.snap$",
+    # common "do not edit" generated code
+    r"\.pb\.go$", r"_pb2\.py$", r"\.g\.dart$", r"\.freezed\.dart$",
+    r"\.generated\.(ts|js|tsx)$", r"(^|/)generated/",
+]
+_GENERATED_RE = re.compile("|".join(GENERATED_PATTERNS))
+
+
+def is_generated_path(path):
+    """Heuristic: does this path look like a lockfile / vendored dep /
+    build artifact / generated code — i.e. a diff that needs no prose?"""
+    return bool(_GENERATED_RE.search(path or ""))
+
+
 def cmd_extract(args):
     run_git(["rev-parse", "--show-toplevel"])  # fail early outside a repo
     mode = args.mode
@@ -216,9 +246,11 @@ def cmd_extract(args):
 
     files = parse_diff(raw)
 
-    # assign global hunk ids and intraline highlights
+    # assign global hunk ids and intraline highlights; flag generated files
     counter = 0
     for f in files:
+        f["generated"] = is_generated_path(f["path"]) or (
+            f["old_path"] is not None and is_generated_path(f["old_path"]))
         for h in f["hunks"]:
             counter += 1
             h["id"] = f"h{counter:03d}"
@@ -228,6 +260,7 @@ def cmd_extract(args):
     os.makedirs(workdir, exist_ok=True)
     data = {
         "source": source,
+        "detail": args.detail,
         "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "files": files,
     }
@@ -244,7 +277,10 @@ def cmd_extract(args):
               f"merge-base: {source['merge_base'][:12]}")
     else:
         print(f"mode: {mode} ({label[mode]})  branch: {head_name}")
-    print(f"{len(files)} files, {counter} hunks, +{total_add} -{total_del}")
+    n_generated = sum(1 for f in files if f["generated"])
+    print(f"{len(files)} files, {counter} hunks, +{total_add} -{total_del}"
+          + (f"  ({n_generated} generated/lock files)" if n_generated else ""))
+    print(f"detail level: {args.detail}")
     print()
     print("Hunk index (assign these ids to groups in explanations.json):")
     for f in files:
@@ -252,7 +288,8 @@ def cmd_extract(args):
         if f["old_path"]:
             lab = f"{f['old_path']} -> {f['path']}"
         print(f"  {lab}  [{f['status']}] +{f['additions']} -{f['deletions']}"
-              + ("  (binary)" if f["binary"] else ""))
+              + ("  (binary)" if f["binary"] else "")
+              + ("  (generated — 解説不要)" if f["generated"] else ""))
         for h in f["hunks"]:
             print(f"    {h['id']}: {h['header'][:100]}")
 
@@ -336,11 +373,12 @@ def code_html(ln):
             + esc(s[b:]))
 
 
-def render_hunk(hunk, file_path, line_annots=None):
+def render_hunk(hunk, file_path, line_annots=None, generated=False):
     """Render a hunk's diff table. `line_annots` maps a new-side line number
     to a list of (kind, text, sendable) tuples; each is emitted as a
     full-width annotation row directly under that line — this is how AI
-    findings/notes anchored to a specific line show up inline."""
+    findings/notes anchored to a specific line show up inline. `generated`
+    tags the hunk header when the file is a lockfile/build artifact."""
     line_annots = line_annots or {}
     rows = []
     for ln in hunk["lines"]:
@@ -380,12 +418,15 @@ def render_hunk(hunk, file_path, line_annots=None):
     m = HUNK_HEADER.match(header)
     rng = f"@@ -{m.group(1)},{m.group(2) or 1} +{m.group(3)},{m.group(4) or 1}" \
         if m else header
+    gen_badge = ('<span class="genbadge" title="自動生成/lock: 解説対象外">'
+                 'generated</span>' if generated else "")
     return f"""
 <div class="hunk" id="{hunk["id"]}">
   <div class="hunk-head">
     <span class="hid">{hunk["id"]}</span>
     <span class="hpath">{esc(file_path)}</span>
     <span class="hrange">{esc(rng)}</span>
+    {gen_badge}
   </div>
   <table class="diff">{"".join(rows)}</table>
 </div>"""
@@ -606,7 +647,8 @@ def cmd_render(args):
                             "id": f"{hid}:{line}", "file": f["path"],
                             "kind": ANNOT_KINDS[kind][0], "text": text})
                 line_annots[line] = out
-            hunks_html.append(render_hunk(h, f["path"], line_annots))
+            hunks_html.append(render_hunk(h, f["path"], line_annots,
+                                          generated=f.get("generated", False)))
 
             # hunk-level annotations render below the hunk (line unspecified)
             anchor = hunk_comment_anchor(h) if is_branch else None
@@ -1060,6 +1102,9 @@ body {{ margin:0; background:var(--bg); color:var(--fg);
 .hid {{ color:var(--muted); }}
 .hpath {{ font-weight:700; }}
 .hrange {{ color:var(--muted); }}
+.genbadge {{ margin-left:auto; font-size:11px; padding:1px 8px;
+  border-radius:6px; background:#edeff3; color:#5b6472;
+  border:1px solid var(--border); }}
 table.diff {{ width:100%; border-collapse:collapse; font-family:var(--mono);
   font-size:12.5px; line-height:21px; }}
 table.diff td {{ padding:0 9px; vertical-align:top; }}
@@ -1169,6 +1214,7 @@ dialog h3 {{ margin-top:0; }}
 </div></div>
 <div class="wrap">
   <div class="seclabel">対象: {src_line} · 生成 {esc(data["generated_at"])}
+    · 解説量 {esc(data.get("detail", "medium"))}
     {"· 指摘 " + str(n_findings_total) + "件" if n_findings_total else ""}
     {"· 要改善 " + str(n_unclear_total) + "件" if n_unclear_total else ""}</div>
   <div class="seclabel">01 / 変更グループ一覧</div>
@@ -1254,6 +1300,11 @@ def main():
     pe.add_argument("--base", help="base branch (branch mode; auto-detected)")
     pe.add_argument("--head", help="head ref (branch mode; default HEAD)")
     pe.add_argument("--workdir", help="output dir (default: mktemp)")
+    pe.add_argument("--detail", default="medium",
+                    choices=["small", "medium", "large"],
+                    help="how much explanation prose to write (small/medium/"
+                         "large); the caller reads this and writes "
+                         "explanations.json accordingly")
     pe.set_defaults(func=cmd_extract)
 
     pr = sub.add_parser("render", help="render the review HTML")
