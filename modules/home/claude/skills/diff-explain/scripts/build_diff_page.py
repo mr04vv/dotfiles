@@ -463,6 +463,10 @@ def split_annot_key(key):
 
 def cmd_render(args):
     workdir = args.workdir
+    # "review-less" mode: drop AI findings/unclear entirely, keeping only the
+    # explanatory annotations (意図/コード解説/解説), human comments and PR
+    # submission. Set via --no-review.
+    no_review = getattr(args, "no_review", False)
     with open(os.path.join(workdir, "diff_data.json")) as fp:
         data = json.load(fp)
     expl = {"title": "", "groups": []}
@@ -498,8 +502,11 @@ def cmd_render(args):
     total_add = sum(f["additions"] for f in files)
     total_del = sum(f["deletions"] for f in files)
     n_hunks = len(hmap)
-    n_findings_total = sum(len(g.get("findings", {}) or {}) for g in groups)
-    n_unclear_total = sum(len(g.get("unclear", {}) or {}) for g in groups)
+    if no_review:
+        n_findings_total = n_unclear_total = 0
+    else:
+        n_findings_total = sum(len(g.get("findings", {}) or {}) for g in groups)
+        n_unclear_total = sum(len(g.get("unclear", {}) or {}) for g in groups)
 
     if src["mode"] == "branch":
         default_title = f'{src["head"]} の差分レビュー'
@@ -517,8 +524,8 @@ def cmd_render(args):
     ov_items = []
     for gi, g in enumerate(groups):
         risk = RISK.get(g.get("risk", "low"), RISK["low"])
-        nf = len(g.get("findings", {}) or {})
-        nu = len(g.get("unclear", {}) or {})
+        nf = 0 if no_review else len(g.get("findings", {}) or {})
+        nu = 0 if no_review else len(g.get("unclear", {}) or {})
         tags = "".join(f'<span class="pill">{esc(t)}</span>'
                        for t in g.get("tags", []))
         desc = g.get("description") or g.get("intent", "")
@@ -544,12 +551,16 @@ def cmd_render(args):
     copy_items = []   # LLM annotations for the copy-back summary
     group_meta = []   # gid-indexed names for JS
     key_warnings = []  # annotation keys whose line doesn't exist in the hunk
-    # annotation types, in the display order shown under each line/hunk
+    # annotation types, in the display order shown under each line/hunk.
+    # In no-review mode the AI findings/unclear are dropped entirely.
     ANNOT_FIELDS = [
         ("hunk_intents", "hintent"), ("code_notes", "code"),
         ("findings", "finding"), ("unclear", "unclear"),
         ("hunk_notes", "note"),
     ]
+    if no_review:
+        ANNOT_FIELDS = [(f, k) for f, k in ANNOT_FIELDS
+                        if f not in ("findings", "unclear")]
     SENDABLE_KINDS = {"finding", "unclear"}  # only these go to a PR
     for gi, g in enumerate(groups):
         risk = RISK.get(g.get("risk", "low"), RISK["low"])
@@ -1248,6 +1259,9 @@ def main():
     pr = sub.add_parser("render", help="render the review HTML")
     pr.add_argument("--workdir", required=True)
     pr.add_argument("--out", help="output HTML path")
+    pr.add_argument("--no-review", action="store_true",
+                    help="explanation-only: drop AI findings/unclear, keep "
+                         "解説・human comments・PR submission")
     pr.set_defaults(func=cmd_render)
 
     args = p.parse_args()

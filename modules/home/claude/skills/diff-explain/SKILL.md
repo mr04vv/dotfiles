@@ -194,6 +194,9 @@ Field guidance:
 
 ### 4. 忖度対策: two-stage review (when a plan/spec exists)
 
+（解説のみモード `--no-review` を使う場合は指摘を出さないので、この節は
+スキップしてよい。）
+
 If the change was implemented from a plan, spec, or instructions that are
 visible to you (in context, in the repo, or provided by the user), there is
 a known failure mode: reviewing against the plan makes you excuse mediocre
@@ -223,6 +226,21 @@ manufacture ceremony.
 ```bash
 python <skill-path>/scripts/build_diff_page.py render --workdir <workdir>
 ```
+
+**解説のみモード (`--no-review`)**: ユーザーが「レビュー（指摘）はいらない、
+解説だけ」と言ったときは `--no-review` を付ける。AI の 指摘/要改善
+(findings/unclear) を一切描画せず、解説系 (意図/コード解説/解説)・人間の
+コメント欄・PR 送信はそのまま残す。指摘/要改善のカウントやバッジ、AI 指摘の
+送信チェックボックスも消える。この場合 explanations.json に findings/unclear
+を書いても無視されるので、そもそも書かなくてよい（書く手間を省ける）。
+
+```bash
+python <skill-path>/scripts/build_diff_page.py render --workdir <workdir> --no-review
+```
+
+判断の目安: 「差分を解説して」「何を変えたか説明して」のような**理解目的**の
+依頼はしばしば解説のみで十分。「レビューして」「問題ないか見て」のような
+**評価目的**の依頼はレビューあり（デフォルト）。迷ったらユーザーに一言確認する。
 
 It prints the path to `diff_review.html`. Open it:
 
