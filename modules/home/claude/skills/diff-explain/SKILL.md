@@ -95,16 +95,17 @@ Write `<workdir>/explanations.json`:
         "h080": "このハンク固有の意図(紫)。このハンクだけで何を狙って変えたか。グループ全体のintentとは別に、この差分片の目的を一言で。"
       },
       "code_notes": {
-        "h080": "コード解説(緑)。変更後のコードが実際に何をしているかの逐次的な読解補助。`resolver.url_for`はmode→builder関数の辞書を引き、該当がなければlegacy builderにfallbackして絶対URLを返す。"
+        "h080:142": "コード解説(緑)。142行目: `resolver.url_for`はmode→builder関数の辞書を引き、該当がなければlegacy builderにfallbackして絶対URLを返す。(行キーなのでこの行の直下にインライン表示)"
       },
       "hunk_notes": {
-        "h080": "解説(青)。なぜこう変えたか・非自明な点。modeフラグの判定をここで一度だけ行い結果をキャッシュしている。呼び出しごとに環境変数を読むとhot pathで無視できないコストになるため。`nil`のときにlegacy扱いになる点が後方互換の要で、明示的にfalseと区別している。"
+        "h080": "解説(青)。なぜこう変えたか・非自明な点。modeフラグの判定をここで一度だけ行い結果をキャッシュしている。呼び出しごとに環境変数を読むとhot pathで無視できないコストになるため。`nil`のときにlegacy扱いになる点が後方互換の要で、明示的にfalseと区別している。(ハンク全体の話なのでハンクキー)"
       },
       "findings": {
-        "h081": "指摘(赤)。レビューで対応を検討すべき問題点や懸念。"
+        "h081:88": "指摘(赤)。88行目: この分岐は境界値でnilが渡り得る。行キーなのでPR送信時に88行目へ正確にアンカーされる。",
+        "h081:95": "指摘(赤)。95行目: 別の問題。1ハンク内の複数指摘は行ごとに分ける。"
       },
       "unclear": {
-        "h082": "要改善(アンバー)。改善余地がある、または変更の意図が差分とリポジトリから読み取れない箇所。"
+        "h082": "要改善(アンバー)。行が特定できない/ハンク全体にかかる話はハンクキーでよい。改善余地がある、または変更の意図が差分とリポジトリから読み取れない箇所。"
       }
     },
     {
@@ -165,13 +166,31 @@ Field guidance:
   Never paper over an unintelligible change with a plausible-sounding
   explanation; marking it 要改善 ("この変更の意図が読み取れません。〜のため
   であれば問題ありませんが確認を推奨") is the honest and more useful output.
+- **注釈は行単位で付けられる**。5 種すべて（hunk_intents / code_notes /
+  findings / unclear / hunk_notes）のキーは、ハンク全体を指す `"h012"` と、
+  ハンク内の特定行を指す `"h012:58"`（58 = **新側 (RIGHT) の行番号**）の
+  両方を取れる。
+  - 行キーを使うと、その注釈は diff テーブルの **その行の直下にインライン
+    表示** される（GitHub の行コメントと同じ見え方）。指摘は「どの行の話か」
+    が一目で分かるので、**可能な限り行キーで付ける**こと。ハンクに問題が
+    複数あるなら `"h012:58"` と `"h012:63"` のように行ごとに分けて書く。
+  - findings/unclear を行キーで付けると、PR 送信時に **その行に正確に
+    アンカー** される（§6）。ハンクキー（行指定なし）の場合は代表行に
+    フォールバックする。
+  - 行番号は必ず extract 出力の diff に実在する新側行にすること。存在しない
+    行を指定すると render がハンク単位にフォールバックし、stderr に警告を
+    出す。行番号が分からないときはハンクキーにする。
+  - ハンク全体にかかる話（設計意図など）はハンクキー、特定行の話は行キー、
+    と使い分ける。
 - **Display order is risk order**: the renderer stable-sorts groups
   high → medium → low, so a reviewer always meets the dangerous changes
   first. Your authored order is preserved within the same risk level — use
-  it to put the conceptual core before its dependents.
+  it to put the conceptual core before its dependents. 同一行内の複数注釈は
+  意図 → コード解説 → 指摘 → 要改善 → 解説 の順で表示される。
 - **Language**: match the user's language (この文脈ではほぼ日本語).
 - Hunk ids must come from the extract output. Each id should appear in at
-  most one group.
+  most one group. 行キー (`h012:58`) の行番号も extract 出力の diff に
+  実在する新側行から取ること。
 
 ### 4. 忖度対策: two-stage review (when a plan/spec exists)
 
@@ -218,10 +237,10 @@ which group to review first, and the findings count if any.
 
 `branch` モードで生成したページには「PR送信用にコピー」ボタンと、末尾に
 **03 / PRレビューを送信** パネル（判定ラジオ + 全体コメント欄）がある。人間は
-各ハンクのコメント欄に行コメントを書き、判定を APPROVE / REQUEST_CHANGES /
-COMMENT から選び、ボタンで **送信用 JSON** をクリップボードにコピーする。その
-JSON を作業セッションに貼って「PR に送って」と依頼されたら、あなたが `gh` で
-GitHub PR レビューとして投稿する。
+行コメント・ハンクコメントを書き、送りたい AI 指摘にチェックを付け、判定を
+APPROVE / REQUEST_CHANGES / COMMENT から選び、ボタンで **送信用 JSON** を
+クリップボードにコピーする。その JSON を作業セッションに貼って「PR に送って」と
+依頼されたら、あなたが `gh` で GitHub PR レビューとして投稿する。
 
 コピーされる JSON の形:
 
@@ -231,20 +250,30 @@ GitHub PR レビューとして投稿する。
   "body": "レビュー全体のサマリー（任意）",
   "comments": [
     { "path": "app/foo.rb", "line": 42, "side": "RIGHT",
-      "body": "人間が h012 のコメント欄に書いた内容" }
+      "body": "人間が書いた行コメント", "author": "human" },
+    { "path": "app/foo.rb", "line": 58, "side": "RIGHT",
+      "body": "🤖 Claude (指摘): nullチェックが抜けている", "author": "ai" }
   ],
   "_context": { "head": "feature-x", "base": "main", "mode": "branch",
-                "title": "...", "skipped_hunks": [] }
+                "title": "...", "counts": { "human": 1, "ai": 1 },
+                "skipped_hunks": [] }
 }
 ```
 
-- 行コメントは **人間が書いたもの限定**。レビュー AI の指摘（findings/
-  unclear）は含まれない（それらは「まとめをコピー」の担当）。ソースは 2 つ:
-  各行の「＋」で付けた **行コメント**（その行そのものに紐づく）と、ハンク末尾
-  の **ハンクコメント欄**（ハンク代表行に紐づく）。
-- 行コメントの `line`/`side` はその行の新側行番号・RIGHT。ハンクコメントの
-  `line`/`side` は代表行（新側の最終追加行を優先、なければ文脈行、それも
-  無ければ旧側の削除行）に自動で対応づけられている。
+- コメントのソースは **3 つ**、いずれも `author` で区別される:
+  1. 各行の「＋」で付けた **行コメント**（その行に紐づく、author=human）
+  2. ハンク末尾の **ハンクコメント欄**（ハンク代表行に紐づく、author=human）
+  3. **AI の指摘・要改善** のうち「PRに送る」にチェックされたもの
+     （author=ai、本文に `🤖 Claude (指摘|要改善):` prefix 付き）。行キーで
+     付けた指摘は **その行に正確にアンカー**、ハンクキーの指摘は代表行に
+     アンカーされる。デフォルト送信 ON なので、人間が不要な指摘のチェックを
+     外して取捨選択する。
+- GitHub は投稿アカウントを偽装できないため、AI/人間の区別は **本文の
+  prefix のみ**（`author` フィールドは送信前に落とす、下記参照）。
+- 行コメント・行キー AI 指摘の `line`/`side` はその行の新側行番号・RIGHT。
+  ハンクコメント・ハンクキー AI 指摘の `line`/`side` は代表行（新側の最終
+  追加行を優先、なければ文脈行、それも無ければ旧側の削除行）に自動で対応
+  づけられている。
 - `_context.skipped_hunks` にハンク id が入っていたら、そのハンクは行を
   特定できずコメントを落としている。ユーザーに知らせ、必要なら PR 全体
   コメント（`body`）へ回すか手動対応を促すこと。
@@ -257,17 +286,19 @@ GitHub PR レビューとして投稿する。
    ```
    見つからなければ「その branch に対応する open PR が無い」旨を伝え、勝手に
    PR を作らない。
-2. JSON をそのまま GitHub API に渡す（`event`/`body`/`comments` はそのまま
-   使える形にしてある。`_context` は送信前に取り除く）:
+2. JSON を GitHub API 用に整形する。`_context` と各コメントの `author`
+   （送信には不要なメタ情報）を落としてから渡す:
    ```bash
    gh api repos/{owner}/{repo}/pulls/<pr-number>/reviews \
-     --method POST --input <(jq 'del(._context)' review.json)
+     --method POST --input <(jq 'del(._context) |
+       .comments |= map(del(.author))' review.json)
    ```
    `{owner}/{repo}` は `gh repo view --json nameWithOwner -q .nameWithOwner`
    で解決できる。
-3. **送信は破壊的で外向きの操作**。実行前に「PR #N に event=<...>、行コメント
-   M 件を送信します」と要約し、ユーザーの承認を得てから叩く。APPROVE /
-   REQUEST_CHANGES は特に、明示的な確認を取る。
+3. **送信は破壊的で外向きの操作**。実行前に「PR #N に event=<...>、人間 H 件 /
+   AI A 件のコメントを送信します」と `_context.counts` を使って要約し、
+   ユーザーの承認を得てから叩く。APPROVE / REQUEST_CHANGES は特に、明示的な
+   確認を取る。
 4. 送信後、返ってきたレビュー URL をユーザーに提示する。
 
 `comments` が空で `event` が COMMENT のとき、GitHub は body 必須。空レビューに
@@ -283,10 +314,11 @@ label, the title, `N files / M hunks +A −D`, an approval progress bar
 linking to its detail card in section 02. Detail cards have the risk badge,
 意図, and a 確認して承認 checkbox. Hunks render with their id, file path,
 `@@` range, two line-number columns, and intraline highlighting of changed
-spans. Annotation boxes sit directly under their hunk in a fixed order —
-意図 (purple, hunk-level intent), コード解説 (green, what the code does),
-指摘 (red), 要改善 (amber), 解説 (blue, why) — followed by a free-text
-comment box (one per hunk, one per group).
+spans. Annotation boxes render in a fixed order — 意図 (purple, hunk-level
+intent), コード解説 (green, what the code does), 指摘 (red), 要改善 (amber),
+解説 (blue, why). 行キー (`h012:58`) で付けた注釈は該当行の **直下に
+インライン表示**、ハンクキー (`h012`) の注釈はハンクの下にまとめて表示される。
+最後に free-text コメント欄（ハンクごと・グループごと）が続く。
 
 **行コメント**: diff の各行（追加行・文脈行 = RIGHT 側）にホバーすると左端に
 「＋」ボタンが出る。押すとその行の直下にインラインでコメント欄が開き、GitHub
@@ -299,7 +331,10 @@ For `branch`-mode diffs the header also shows a **PR送信用にコピー** butt
 and a **03 / PRレビューを送信** panel at the foot carries the APPROVE /
 REQUEST_CHANGES / COMMENT radio and an overall-body box (see §6). 行コメントは
 その行そのものへ、ハンク末尾のコメント欄はハンク代表行へ紐づいて送信 JSON の
-`comments[]` に入る。
+`comments[]` に入る。branch モードでは各 指摘/要改善 の下に「PRに送る」
+チェックボックス（既定 ON）が出て、チェックしたものが author=ai の行コメント
+として（本文に 🤖 Claude prefix 付きで）送信対象に加わる。人間はこれで AI 指摘
+を取捨選択できる。チェック状態も localStorage に保存される。
 
 The **まとめをコピー** button assembles a Markdown summary — all 指摘 and
 要改善 with hunk ids and file paths, every comment the human wrote in the

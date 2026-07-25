@@ -336,7 +336,12 @@ def code_html(ln):
             + esc(s[b:]))
 
 
-def render_hunk(hunk, file_path):
+def render_hunk(hunk, file_path, line_annots=None):
+    """Render a hunk's diff table. `line_annots` maps a new-side line number
+    to a list of (kind, text, sendable) tuples; each is emitted as a
+    full-width annotation row directly under that line — this is how AI
+    findings/notes anchored to a specific line show up inline."""
+    line_annots = line_annots or {}
     rows = []
     for ln in hunk["lines"]:
         t = ln["t"]
@@ -364,6 +369,13 @@ def render_hunk(hunk, file_path):
             f'<td class="code">{btn}<span class="sign">{sign}</span>'
             f'{code_html(ln)}</td></tr>'
         )
+        # inline annotations anchored to this new-side line
+        if ln["new"] is not None and ln["new"] in line_annots:
+            for kind, text, sendable in line_annots[ln["new"]]:
+                rows.append(
+                    '<tr class="annot-row"><td class="ln"></td>'
+                    '<td class="ln"></td><td class="code annot-cell">'
+                    f'{note_html(text, kind, sendable=sendable)}</td></tr>')
     header = hunk["header"]
     m = HUNK_HEADER.match(header)
     rng = f"@@ -{m.group(1)},{m.group(2) or 1} +{m.group(3)},{m.group(4) or 1}" \
@@ -388,10 +400,32 @@ ANNOT_KINDS = {
 }
 
 
-def note_html(text, kind="note"):
+def note_html(text, kind="note", sendable=None):
+    """Render an annotation box. When `sendable` is given (a dict with hid,
+    path, line, side), the box gets a "send to PR" checkbox so the human can
+    include or drop this AI comment; picked ones go into the review payload
+    as author=ai line comments."""
     label, cls = ANNOT_KINDS[kind]
+    check = ""
+    if sendable:
+        # key must be unique per (hid, kind, line) so line-level annotations
+        # on the same hunk+kind don't collide in the send-toggle store.
+        # hunk-level sends carry scope="whole" to stay distinct from a
+        # line-level send that happens to share the representative line.
+        scope = sendable.get("scope", "line")
+        ck = f"ai:{sendable['hid']}:{kind}:{scope}:{sendable['line']}"
+        check = (
+            f'<label class="ai-send" title="このAIコメントをPRに送る">'
+            f'<input type="checkbox" class="ai-send-cb" checked'
+            f' data-key="{esc(ck)}"'
+            f' data-cpath="{html.escape(sendable["path"], quote=True)}"'
+            f' data-cline="{sendable["line"]}"'
+            f' data-cside="{sendable["side"]}"'
+            f' data-kind="{ANNOT_KINDS[kind][0]}"'
+            f' data-body="{html.escape(text, quote=True)}"> PRに送る</label>')
     return (f'<div class="annot {cls}"><span class="annot-label">{label}'
-            f'</span><div class="annot-body">{md_to_html(text)}</div></div>')
+            f'</span><div class="annot-body">{md_to_html(text)}{check}</div>'
+            f'</div>')
 
 
 def hunk_comment_anchor(hunk):
@@ -411,6 +445,22 @@ def hunk_comment_anchor(hunk):
     return add or ctx or dele
 
 
+def hunk_new_lines(hunk):
+    """Set of new-side (RIGHT) line numbers present in a hunk — the lines an
+    annotation or comment may legitimately anchor to."""
+    return {ln["new"] for ln in hunk["lines"] if ln["new"] is not None}
+
+
+def split_annot_key(key):
+    """An annotation key is either a bare hunk id ("h012") or hunk id + line
+    ("h012:58"). Returns (hid, line_or_None)."""
+    if ":" in key:
+        hid, _, lno = key.rpartition(":")
+        if lno.isdigit():
+            return hid, int(lno)
+    return key, None
+
+
 def cmd_render(args):
     workdir = args.workdir
     with open(os.path.join(workdir, "diff_data.json")) as fp:
@@ -423,6 +473,7 @@ def cmd_render(args):
 
     files = data["files"]
     src = data["source"]
+    is_branch = src["mode"] == "branch"
 
     # hunk lookup: id -> (hunk, file)
     hmap = {}
@@ -492,34 +543,71 @@ def cmd_render(args):
     sections = []
     copy_items = []   # LLM annotations for the copy-back summary
     group_meta = []   # gid-indexed names for JS
+    key_warnings = []  # annotation keys whose line doesn't exist in the hunk
+    # annotation types, in the display order shown under each line/hunk
+    ANNOT_FIELDS = [
+        ("hunk_intents", "hintent"), ("code_notes", "code"),
+        ("findings", "finding"), ("unclear", "unclear"),
+        ("hunk_notes", "note"),
+    ]
+    SENDABLE_KINDS = {"finding", "unclear"}  # only these go to a PR
     for gi, g in enumerate(groups):
         risk = RISK.get(g.get("risk", "low"), RISK["low"])
         group_meta.append({"name": g.get("name", "(無題)")})
-        hunk_intents = g.get("hunk_intents", {}) or {}
-        notes = g.get("hunk_notes", {}) or {}
-        code_notes = g.get("code_notes", {}) or {}
-        findings = g.get("findings", {}) or {}
-        unclear = g.get("unclear", {}) or {}
+
+        # organize this group's annotations per hunk into line-level and
+        # hunk-level buckets. Keys are "h012" or "h012:58".
+        hunk_line = {}   # hid -> {line -> [(kind, text)]}
+        hunk_whole = {}  # hid -> [(kind, text)]
+        for field, kind in ANNOT_FIELDS:
+            for key, text in (g.get(field, {}) or {}).items():
+                hid, line = split_annot_key(key)
+                if hid not in hmap:
+                    continue
+                h, _f = hmap[hid]
+                if line is not None:
+                    if line not in hunk_new_lines(h):
+                        key_warnings.append(key)
+                        hunk_whole.setdefault(hid, []).append((kind, text))
+                    else:
+                        hunk_line.setdefault(hid, {}).setdefault(
+                            line, []).append((kind, text))
+                else:
+                    hunk_whole.setdefault(hid, []).append((kind, text))
+
         hunks_html = []
         for hid in g.get("hunks", []):
             if hid not in hmap:
                 continue
             h, f = hmap[hid]
-            hunks_html.append(render_hunk(h, f["path"]))
-            if hid in hunk_intents:
-                hunks_html.append(note_html(hunk_intents[hid], "hintent"))
-            if hid in code_notes:
-                hunks_html.append(note_html(code_notes[hid], "code"))
-            if hid in findings:
-                hunks_html.append(note_html(findings[hid], "finding"))
-                copy_items.append({"id": hid, "file": f["path"],
-                                   "kind": "指摘", "text": findings[hid]})
-            if hid in unclear:
-                hunks_html.append(note_html(unclear[hid], "unclear"))
-                copy_items.append({"id": hid, "file": f["path"],
-                                   "kind": "要改善", "text": unclear[hid]})
-            if hid in notes:
-                hunks_html.append(note_html(notes[hid], "note"))
+            # build inline (line-level) annotations, attaching send checkboxes
+            line_annots = {}
+            for line, items in hunk_line.get(hid, {}).items():
+                out = []
+                for kind, text in items:
+                    sendable = None
+                    if is_branch and kind in SENDABLE_KINDS:
+                        sendable = {"hid": hid, "path": f["path"],
+                                    "line": line, "side": "RIGHT"}
+                    out.append((kind, text, sendable))
+                    if kind in SENDABLE_KINDS:
+                        copy_items.append({
+                            "id": f"{hid}:{line}", "file": f["path"],
+                            "kind": ANNOT_KINDS[kind][0], "text": text})
+                line_annots[line] = out
+            hunks_html.append(render_hunk(h, f["path"], line_annots))
+
+            # hunk-level annotations render below the hunk (line unspecified)
+            anchor = hunk_comment_anchor(h) if is_branch else None
+            hunk_send = ({"hid": hid, "path": f["path"], "scope": "whole",
+                          **anchor} if anchor else None)
+            for kind, text in hunk_whole.get(hid, []):
+                send = hunk_send if kind in SENDABLE_KINDS else None
+                hunks_html.append(note_html(text, kind, sendable=send))
+                if kind in SENDABLE_KINDS:
+                    copy_items.append({"id": hid, "file": f["path"],
+                                       "kind": ANNOT_KINDS[kind][0],
+                                       "text": text})
             hunks_html.append(
                 f'<textarea class="cmt" data-key="hunk:{hid}" rows="1" '
                 f'placeholder="このハンクにコメントを残す…"></textarea>')
@@ -674,6 +762,20 @@ function toggleLineComment(btn) {
     });
   });
 })();
+// ---- AI-comment send toggles (findings/unclear -> PR line comments) ----
+var AIKEY = KEY + ':aisend';
+var aiSend = (function () {
+  try { return JSON.parse(localStorage.getItem(AIKEY) || '{}'); }
+  catch (e) { return {}; }
+})();
+document.querySelectorAll('.ai-send-cb').forEach(function (cb) {
+  var k = cb.dataset.key;
+  if (aiSend[k] === false) cb.checked = false;   // default checked
+  cb.addEventListener('change', function () {
+    aiSend[k] = cb.checked;
+    try { localStorage.setItem(AIKEY, JSON.stringify(aiSend)); } catch (e) {}
+  });
+});
 function toast(msg) {
   var el = document.getElementById('toast');
   el.textContent = msg;
@@ -749,9 +851,12 @@ function selectedEvent() {
   var r = document.querySelector('input[name="review-event"]:checked');
   return r ? r.value : 'COMMENT';
 }
+var AI_PREFIX = '🤖 Claude';
 function buildReviewPayload() {
-  // Line comments map to their exact line. Hunk-level comment boxes fall back
-  // to the hunk's representative line. Both become GitHub review comments.
+  // Comments come from three sources, each tagged with an author:
+  //  - human line comments (exact line)      author: 'human'
+  //  - human hunk comments (representative)   author: 'human'
+  //  - checked AI findings/unclear            author: 'ai' (prefixed body)
   var comments = [];
   var skipped = [];
   document.querySelectorAll('.cmt').forEach(function (t) {
@@ -760,17 +865,34 @@ function buildReviewPayload() {
     if (key.indexOf('line:') === 0) {
       comments.push({ path: t.dataset.cpath,
                       line: parseInt(t.dataset.cline, 10),
-                      side: t.dataset.cside, body: t.value.trim() });
+                      side: t.dataset.cside, body: t.value.trim(),
+                      author: 'human' });
     } else if (key.indexOf('hunk:') === 0) {
       var hid = key.slice(5);
       var a = HUNK_ANCHORS[hid];
       if (!a) { skipped.push(hid); return; }
       comments.push({ path: a.path, line: a.line, side: a.side,
-                      body: t.value.trim() });
+                      body: t.value.trim(), author: 'human' });
     }
+  });
+  // checked AI comments: prefix the body so GitHub readers see the author
+  document.querySelectorAll('.ai-send-cb').forEach(function (cb) {
+    if (!cb.checked) return;
+    var raw = cb.dataset.body || '';
+    if (!raw.trim()) return;
+    comments.push({
+      path: cb.dataset.cpath,
+      line: parseInt(cb.dataset.cline, 10),
+      side: cb.dataset.cside,
+      body: AI_PREFIX + ' (' + cb.dataset.kind + '): ' + raw.trim(),
+      author: 'ai'
+    });
   });
   var event = selectedEvent();
   var body = (document.getElementById('review-body') || {}).value || '';
+  var nHuman = comments.filter(function (c) { return c.author === 'human'; })
+    .length;
+  var nAi = comments.length - nHuman;
   var payload = {
     event: event,          // APPROVE | REQUEST_CHANGES | COMMENT
     body: body.trim(),
@@ -778,22 +900,21 @@ function buildReviewPayload() {
     _context: {
       head: PR_CONTEXT.head, base: PR_CONTEXT.base, mode: PR_CONTEXT.mode,
       title: PAGE_TITLE,
+      counts: { human: nHuman, ai: nAi },
       skipped_hunks: skipped   // hunks whose comment had no anchorable line
     }
   };
   return payload;
 }
 function copyReviewPayload() {
-  var p = buildReviewPayload();
   if (PR_CONTEXT.mode !== 'branch') {
     toast('PR送信はbranchモードの差分でのみ利用できます');
     return;
   }
-  if (p.event === 'APPROVE' && p.comments.length === 0 && !p.body) {
-    // APPROVE with no body/comments is valid, but warn if truly empty
-  }
+  var p = buildReviewPayload();
+  var c = p._context.counts;
   copyText(JSON.stringify(p, null, 2),
-    'PR送信用JSONをコピーしました（' + p.comments.length + '件の行コメント）');
+    'PR送信用JSONをコピー（人間 ' + c.human + '件 / AI ' + c.ai + '件）');
 }
 """
 
@@ -802,10 +923,12 @@ function copyReviewPayload() {
         pr_panel_html = """
   <div class="seclabel">03 / PRレビューを送信</div>
   <section class="pr-panel">
-    <p class="pr-note">各ハンクのコメント欄に書いた内容が、対応する行への
-      PRレビューコメントになります（レビューAIの指摘は含まれません）。
-      判定を選び「PR送信用にコピー」で構造化JSONをコピーし、作業セッションに
-      戻して送信を依頼してください。</p>
+    <p class="pr-note">送信対象は 2 種類: あなたが各行・各ハンクに書いた
+      コメント（author=human）と、レビューAIの指摘・要改善のうち「PRに送る」に
+      チェックしたもの（author=ai、本文に🤖 Claude prefix付き）。AIの指摘は
+      デフォルトで送信ONなので、不要なものはチェックを外してください。判定を
+      選び「PR送信用にコピー」でJSONをコピーし、作業セッションに戻して送信を
+      依頼してください。</p>
     <div class="pr-events">
       <label><input type="radio" name="review-event" value="COMMENT" checked>
         コメントのみ (COMMENT)</label>
@@ -949,6 +1072,9 @@ tr.meta td.code {{ color:var(--muted); font-style:italic; }}
   transition:opacity .12s; z-index:2; }}
 tr:hover .addcmt {{ opacity:1; }}
 .addcmt:hover {{ background:#1d4fd0; }}
+tr.annot-row td.annot-cell {{ padding:6px 12px 6px 40px;
+  background:var(--card); white-space:normal; }}
+tr.annot-row .annot {{ margin:4px 0; }}
 tr.line-cmt-row td {{ padding:0; background:var(--card); }}
 .line-cmt-box {{ margin:8px 12px 8px 52px; }}
 .line-cmt-box .line-cmt-meta {{ font-family:var(--mono); font-size:11.5px;
@@ -974,6 +1100,9 @@ tr.line-cmt-row td {{ padding:0; background:var(--card); }}
 .annot-body p {{ margin:0 0 4px; }}
 .annot-body p:last-child {{ margin:0; }}
 .annot-body ul {{ margin:4px 0; padding-left:20px; }}
+.ai-send {{ display:inline-flex; align-items:center; gap:6px; margin-top:6px;
+  font-size:12px; color:var(--muted); cursor:pointer; user-select:none; }}
+.ai-send input {{ width:14px; height:14px; accent-color:var(--accent); }}
 .cmt {{ display:block; width:100%; margin:10px 0 2px;
   border:1px dashed var(--border); border-radius:8px; padding:8px 12px;
   font:inherit; font-size:13px; resize:vertical; background:#fbfcfe;
@@ -1093,6 +1222,12 @@ function updateProgress() {{
     with open(out, "w") as fp:
         fp.write(html_doc)
     print(out)
+    if key_warnings:
+        print("WARNING: これらの注釈キーは指定行がハンク内に存在しないため "
+              "ハンク単位にフォールバックしました（行番号は新側/RIGHTの実在行を "
+              "指定してください）:", file=sys.stderr)
+        for k in key_warnings:
+            print(f"  {k}", file=sys.stderr)
 
 
 # ----------------------------------------------------------------------- cli
