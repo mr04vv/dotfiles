@@ -28,5 +28,7 @@
     mkdir -p ${config.home.homeDirectory}/.codex/skills/to-claude
     chmod -R u+w ${config.home.homeDirectory}/.codex/skills 2>/dev/null || true
     cp -r ${./claude/codex/skills}/. ${config.home.homeDirectory}/.codex/skills/
+    # shared skills (single source in claude/skills, deployed to both claude and codex)
+    cp -r ${./claude/skills/diff-explain} ${config.home.homeDirectory}/.codex/skills/
   '';
 }

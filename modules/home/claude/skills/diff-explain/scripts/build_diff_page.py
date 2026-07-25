@@ -1,0 +1,992 @@
+#!/usr/bin/env python3
+"""build_diff_page.py — annotated diff review page builder.
+
+Two subcommands:
+
+  extract   Compute a diff (branch vs base, or unstaged/staged/worktree),
+            parse it, assign global hunk ids (h001, h002, ...), and write
+            diff_data.json + raw.diff into a workdir. Prints an index of
+            files/hunks so the caller (Claude) knows what to annotate.
+
+  render    Combine diff_data.json with explanations.json (written by
+            Claude: change groups, intents, risks, notes, findings) into a
+            single self-contained review HTML with per-group approval
+            checkboxes. No CDN, no network needed to view.
+
+Usage:
+  python build_diff_page.py extract [--mode branch|unstaged|staged|worktree]
+                                    [--base BRANCH] [--head REF]
+                                    [--workdir DIR]
+  python build_diff_page.py render  --workdir DIR [--out FILE]
+"""
+
+import argparse
+import datetime
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+# ---------------------------------------------------------------- git helpers
+
+
+def run_git(args, check=True):
+    result = subprocess.run(["git"] + args, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        sys.exit(f"git {' '.join(args)} failed:\n{result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def detect_base_branch():
+    out = subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        capture_output=True, text=True,
+    )
+    if out.returncode == 0:
+        return out.stdout.strip().replace("refs/remotes/", "", 1)
+    for cand in ("origin/main", "origin/master", "main", "master",
+                 "origin/develop", "develop"):
+        ok = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", cand],
+            capture_output=True, text=True,
+        )
+        if ok.returncode == 0:
+            return cand
+    sys.exit("Could not detect a base branch. Pass one with --base.")
+
+
+# ---------------------------------------------------------------- diff parser
+
+DIFF_HEADER = re.compile(r"^diff --git (?:a/|\")?(.*?)(?:\"|) (?:b/|\")?(.*?)(?:\"|)$")
+HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def parse_diff(raw):
+    files = []
+    cur = None
+    hunk = None
+    old_no = new_no = 0
+
+    def close_file():
+        nonlocal cur, hunk
+        if cur is not None:
+            files.append(cur)
+        cur = None
+        hunk = None
+
+    for line in raw.split("\n"):
+        m = DIFF_HEADER.match(line)
+        if m:
+            close_file()
+            cur = {"path": m.group(2), "old_path": None, "status": "modified",
+                   "binary": False, "additions": 0, "deletions": 0,
+                   "hunks": []}
+            continue
+        if cur is None:
+            continue
+        if line.startswith("new file mode"):
+            cur["status"] = "added"
+            continue
+        if line.startswith("deleted file mode"):
+            cur["status"] = "deleted"
+            continue
+        if line.startswith("rename from "):
+            cur["old_path"] = line[len("rename from "):]
+            cur["status"] = "renamed"
+            continue
+        if line.startswith("rename to "):
+            cur["path"] = line[len("rename to "):]
+            continue
+        if line.startswith("Binary files "):
+            cur["binary"] = True
+            continue
+        if line.startswith("--- "):
+            p = line[4:]
+            if p != "/dev/null" and cur["old_path"] is None:
+                cur["old_path"] = re.sub(r"^a/", "", p)
+            continue
+        if line.startswith("+++ "):
+            p = line[4:]
+            if p != "/dev/null":
+                cur["path"] = re.sub(r"^b/", "", p)
+            continue
+        m = HUNK_HEADER.match(line)
+        if m:
+            old_no = int(m.group(1))
+            new_no = int(m.group(3))
+            hunk = {"header": line, "lines": []}
+            cur["hunks"].append(hunk)
+            continue
+        if hunk is None:
+            continue
+        if line.startswith("+"):
+            hunk["lines"].append({"t": "add", "old": None, "new": new_no,
+                                  "s": line[1:]})
+            new_no += 1
+            cur["additions"] += 1
+        elif line.startswith("-"):
+            hunk["lines"].append({"t": "del", "old": old_no, "new": None,
+                                  "s": line[1:]})
+            old_no += 1
+            cur["deletions"] += 1
+        elif line.startswith(" ") or line == "":
+            hunk["lines"].append({"t": "ctx", "old": old_no, "new": new_no,
+                                  "s": line[1:] if line else ""})
+            old_no += 1
+            new_no += 1
+        elif line.startswith("\\"):
+            hunk["lines"].append({"t": "meta", "old": None, "new": None,
+                                  "s": line})
+    close_file()
+    for f in files:
+        if f["old_path"] == f["path"]:
+            f["old_path"] = None
+    return files
+
+
+# ------------------------------------------------------- intraline highlight
+
+
+def mark_intraline(lines):
+    """For paired del/add runs of equal length, compute a changed-span
+    highlight (common prefix/suffix trim). Stores (start, end) on the line
+    dict as 'hl'. Skips pairs where nearly the whole line changed."""
+    i = 0
+    n = len(lines)
+    while i < n:
+        if lines[i]["t"] != "del":
+            i += 1
+            continue
+        j = i
+        while j < n and lines[j]["t"] == "del":
+            j += 1
+        k = j
+        while k < n and lines[k]["t"] == "add":
+            k += 1
+        dels, adds = lines[i:j], lines[j:k]
+        if dels and adds:
+            for d, a in zip(dels, adds):
+                sa, sb = d["s"], a["s"]
+                p = 0
+                while p < len(sa) and p < len(sb) and sa[p] == sb[p]:
+                    p += 1
+                q = 0
+                while (q < len(sa) - p and q < len(sb) - p
+                       and sa[len(sa) - 1 - q] == sb[len(sb) - 1 - q]):
+                    q += 1
+                for s, ln in ((sa, d), (sb, a)):
+                    mid = len(s) - p - q
+                    if 0 < mid and (p + q) >= max(4, len(s) // 5):
+                        ln["hl"] = (p, len(s) - q)
+        i = k
+
+
+# ------------------------------------------------------------------- extract
+
+
+def cmd_extract(args):
+    run_git(["rev-parse", "--show-toplevel"])  # fail early outside a repo
+    mode = args.mode
+    label = {"branch": None, "unstaged": "unstaged changes",
+             "staged": "staged changes", "worktree": "worktree vs HEAD"}
+    if mode == "branch":
+        head = args.head or "HEAD"
+        head_name = run_git(["rev-parse", "--abbrev-ref", head])
+        base = args.base or detect_base_branch()
+        merge_base = run_git(["merge-base", base, head])
+        diff_args = [merge_base, head]
+        source = {"mode": "branch", "base_branch": base, "head": head_name,
+                  "merge_base": merge_base}
+    else:
+        head_name = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+        diff_args = {"unstaged": [], "staged": ["--cached"],
+                     "worktree": ["HEAD"]}[mode]
+        source = {"mode": mode, "head": head_name, "label": label[mode]}
+
+    raw = subprocess.run(
+        ["git", "diff", "--no-color", "--find-renames", "-U3"] + diff_args,
+        capture_output=True, text=True,
+    ).stdout
+
+    if not raw.strip():
+        sys.exit("No differences found for the requested mode.")
+
+    files = parse_diff(raw)
+
+    # assign global hunk ids and intraline highlights
+    counter = 0
+    for f in files:
+        for h in f["hunks"]:
+            counter += 1
+            h["id"] = f"h{counter:03d}"
+            mark_intraline(h["lines"])
+
+    workdir = args.workdir or tempfile.mkdtemp(prefix="diff-review-")
+    os.makedirs(workdir, exist_ok=True)
+    data = {
+        "source": source,
+        "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "files": files,
+    }
+    with open(os.path.join(workdir, "diff_data.json"), "w") as fp:
+        json.dump(data, fp, ensure_ascii=False, indent=1)
+    with open(os.path.join(workdir, "raw.diff"), "w") as fp:
+        fp.write(raw)
+
+    total_add = sum(f["additions"] for f in files)
+    total_del = sum(f["deletions"] for f in files)
+    print(f"workdir: {workdir}")
+    if mode == "branch":
+        print(f"base: {source['base_branch']}  head: {source['head']}  "
+              f"merge-base: {source['merge_base'][:12]}")
+    else:
+        print(f"mode: {mode} ({label[mode]})  branch: {head_name}")
+    print(f"{len(files)} files, {counter} hunks, +{total_add} -{total_del}")
+    print()
+    print("Hunk index (assign these ids to groups in explanations.json):")
+    for f in files:
+        lab = f["path"]
+        if f["old_path"]:
+            lab = f"{f['old_path']} -> {f['path']}"
+        print(f"  {lab}  [{f['status']}] +{f['additions']} -{f['deletions']}"
+              + ("  (binary)" if f["binary"] else ""))
+        for h in f["hunks"]:
+            print(f"    {h['id']}: {h['header'][:100]}")
+
+
+# ------------------------------------------------------- markdown-mini render
+
+
+def md_to_html(text):
+    out = []
+    lines = text.split("\n")
+    i = 0
+    in_ul = False
+
+    def close_ul():
+        nonlocal in_ul
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+
+    def inline(s):
+        s = html.escape(s)
+        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+        return s
+
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith("```"):
+            close_ul()
+            block = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                block.append(lines[i])
+                i += 1
+            out.append("<pre><code>" + html.escape("\n".join(block))
+                       + "</code></pre>")
+            i += 1
+            continue
+        if re.match(r"^\s*[-*] ", line):
+            if not in_ul:
+                out.append("<ul>")
+                in_ul = True
+            out.append("<li>" + inline(re.sub(r"^\s*[-*] ", "", line))
+                       + "</li>")
+            i += 1
+            continue
+        close_ul()
+        if line.strip():
+            para = [line]
+            while (i + 1 < len(lines) and lines[i + 1].strip()
+                   and not re.match(r"^\s*[-*] ", lines[i + 1])
+                   and not lines[i + 1].strip().startswith("```")):
+                i += 1
+                para.append(lines[i])
+            out.append("<p>" + inline(" ".join(para)) + "</p>")
+        i += 1
+    close_ul()
+    return "\n".join(out)
+
+
+# -------------------------------------------------------------------- render
+
+RISK = {
+    "high":   {"cls": "high",   "label": "要注意"},
+    "medium": {"cls": "medium", "label": "注意"},
+    "low":    {"cls": "low",    "label": "低リスク"},
+}
+
+
+def esc(s):
+    return html.escape(s, quote=False)
+
+
+def code_html(ln):
+    s = ln["s"]
+    hl = ln.get("hl")
+    if not hl:
+        return esc(s)
+    a, b = hl
+    return (esc(s[:a]) + '<span class="hl">' + esc(s[a:b]) + "</span>"
+            + esc(s[b:]))
+
+
+def render_hunk(hunk, file_path):
+    rows = []
+    for ln in hunk["lines"]:
+        t = ln["t"]
+        if t == "meta":
+            rows.append('<tr class="meta"><td class="ln"></td>'
+                        '<td class="ln"></td>'
+                        f'<td class="code">{esc(ln["s"])}</td></tr>')
+            continue
+        old = "" if ln["old"] is None else ln["old"]
+        new = "" if ln["new"] is None else ln["new"]
+        sign = {"add": "+", "del": "-", "ctx": " "}[t]
+        rows.append(
+            f'<tr class="{t}"><td class="ln">{old}</td>'
+            f'<td class="ln">{new}</td>'
+            f'<td class="code"><span class="sign">{sign}</span>'
+            f'{code_html(ln)}</td></tr>'
+        )
+    header = hunk["header"]
+    m = HUNK_HEADER.match(header)
+    rng = f"@@ -{m.group(1)},{m.group(2) or 1} +{m.group(3)},{m.group(4) or 1}" \
+        if m else header
+    return f"""
+<div class="hunk" id="{hunk["id"]}">
+  <div class="hunk-head">
+    <span class="hid">{hunk["id"]}</span>
+    <span class="hpath">{esc(file_path)}</span>
+    <span class="hrange">{esc(rng)}</span>
+  </div>
+  <table class="diff">{"".join(rows)}</table>
+</div>"""
+
+
+ANNOT_KINDS = {
+    "hintent": ("意図", "hintent"),
+    "note":    ("解説", "note"),
+    "code":    ("コード解説", "code"),
+    "finding": ("指摘", "finding"),
+    "unclear": ("要改善", "unclear"),
+}
+
+
+def note_html(text, kind="note"):
+    label, cls = ANNOT_KINDS[kind]
+    return (f'<div class="annot {cls}"><span class="annot-label">{label}'
+            f'</span><div class="annot-body">{md_to_html(text)}</div></div>')
+
+
+def hunk_comment_anchor(hunk):
+    """Pick the line a GitHub PR review comment should attach to for this
+    hunk. GitHub anchors a comment to a single line of the diff; prefer the
+    last added line (new side, RIGHT), else the last context line (RIGHT),
+    else the last deleted line (old side, LEFT). Returns {line, side} or None
+    when the hunk has no anchorable line."""
+    add = ctx = dele = None
+    for ln in hunk["lines"]:
+        if ln["t"] == "add" and ln["new"] is not None:
+            add = {"line": ln["new"], "side": "RIGHT"}
+        elif ln["t"] == "ctx" and ln["new"] is not None:
+            ctx = {"line": ln["new"], "side": "RIGHT"}
+        elif ln["t"] == "del" and ln["old"] is not None:
+            dele = {"line": ln["old"], "side": "LEFT"}
+    return add or ctx or dele
+
+
+def cmd_render(args):
+    workdir = args.workdir
+    with open(os.path.join(workdir, "diff_data.json")) as fp:
+        data = json.load(fp)
+    expl = {"title": "", "groups": []}
+    expl_path = os.path.join(workdir, "explanations.json")
+    if os.path.exists(expl_path):
+        with open(expl_path) as fp:
+            expl.update(json.load(fp))
+
+    files = data["files"]
+    src = data["source"]
+
+    # hunk lookup: id -> (hunk, file)
+    hmap = {}
+    for f in files:
+        for h in f["hunks"]:
+            hmap[h["id"]] = (h, f)
+
+    groups = list(expl.get("groups", []))
+    used = set()
+    for g in groups:
+        used.update(g.get("hunks", []))
+    leftover = [hid for hid in hmap if hid not in used]
+    if leftover:
+        groups.append({"name": "その他の変更", "risk": "low",
+                       "intent": "上記グループに含まれない残りの変更です。",
+                       "hunks": leftover})
+
+    # display order is risk order (stable: author order kept within a level)
+    risk_order = {"high": 0, "medium": 1, "low": 2}
+    groups.sort(key=lambda g: risk_order.get(g.get("risk", "low"), 2))
+
+    total_add = sum(f["additions"] for f in files)
+    total_del = sum(f["deletions"] for f in files)
+    n_hunks = len(hmap)
+    n_findings_total = sum(len(g.get("findings", {}) or {}) for g in groups)
+    n_unclear_total = sum(len(g.get("unclear", {}) or {}) for g in groups)
+
+    if src["mode"] == "branch":
+        default_title = f'{src["head"]} の差分レビュー'
+        src_line = (f'<code>{esc(src["base_branch"])}</code> ⟵ '
+                    f'<code>{esc(src["head"])}</code> · merge-base '
+                    f'<code>{esc(src["merge_base"][:12])}</code>')
+    else:
+        jp = {"unstaged": "未ステージ差分", "staged": "ステージ済み差分",
+              "worktree": "作業ツリー差分 (HEAD比較)"}[src["mode"]]
+        default_title = f'{jp}レビュー'
+        src_line = (f'{jp} · ブランチ <code>{esc(src["head"])}</code>')
+    title = expl.get("title") or default_title
+
+    # ---- overview list
+    ov_items = []
+    for gi, g in enumerate(groups):
+        risk = RISK.get(g.get("risk", "low"), RISK["low"])
+        nf = len(g.get("findings", {}) or {})
+        nu = len(g.get("unclear", {}) or {})
+        tags = "".join(f'<span class="pill">{esc(t)}</span>'
+                       for t in g.get("tags", []))
+        desc = g.get("description") or g.get("intent", "")
+        if len(desc) > 60:
+            desc = desc[:60] + "…"
+        find_badge = (f'<span class="findct">指摘 {nf}</span>' if nf else "") \
+            + (f'<span class="unclct">要改善 {nu}</span>' if nu else "")
+        ov_items.append(f"""
+<a class="ov risk-{risk["cls"]}" href="#group-{gi}">
+  <div class="ov-main">
+    <div class="ov-name">{esc(g.get("name", "(無題)"))}</div>
+    <div class="ov-desc">{esc(desc)}</div>
+  </div>
+  <div class="ov-side">
+    {find_badge}{tags}
+    <span class="hunkct">{len(g.get("hunks", []))} hunks</span>
+    <span class="badge {risk["cls"]}">{risk["label"]}</span>
+  </div>
+</a>""")
+
+    # ---- group detail sections
+    sections = []
+    copy_items = []   # LLM annotations for the copy-back summary
+    group_meta = []   # gid-indexed names for JS
+    for gi, g in enumerate(groups):
+        risk = RISK.get(g.get("risk", "low"), RISK["low"])
+        group_meta.append({"name": g.get("name", "(無題)")})
+        hunk_intents = g.get("hunk_intents", {}) or {}
+        notes = g.get("hunk_notes", {}) or {}
+        code_notes = g.get("code_notes", {}) or {}
+        findings = g.get("findings", {}) or {}
+        unclear = g.get("unclear", {}) or {}
+        hunks_html = []
+        for hid in g.get("hunks", []):
+            if hid not in hmap:
+                continue
+            h, f = hmap[hid]
+            hunks_html.append(render_hunk(h, f["path"]))
+            if hid in hunk_intents:
+                hunks_html.append(note_html(hunk_intents[hid], "hintent"))
+            if hid in code_notes:
+                hunks_html.append(note_html(code_notes[hid], "code"))
+            if hid in findings:
+                hunks_html.append(note_html(findings[hid], "finding"))
+                copy_items.append({"id": hid, "file": f["path"],
+                                   "kind": "指摘", "text": findings[hid]})
+            if hid in unclear:
+                hunks_html.append(note_html(unclear[hid], "unclear"))
+                copy_items.append({"id": hid, "file": f["path"],
+                                   "kind": "要改善", "text": unclear[hid]})
+            if hid in notes:
+                hunks_html.append(note_html(notes[hid], "note"))
+            hunks_html.append(
+                f'<textarea class="cmt" data-key="hunk:{hid}" rows="1" '
+                f'placeholder="このハンクにコメントを残す…"></textarea>')
+        intent = g.get("intent", "")
+        intent_html = (f'<div class="intent"><span class="intent-label">意図:'
+                       f'</span> {md_to_html(intent)}</div>') if intent else ""
+        sections.append(f"""
+<section class="group risk-{risk["cls"]}" id="group-{gi}">
+  <header class="group-head">
+    <div class="group-title">
+      <span class="badge {risk["cls"]}">{risk["label"]}</span>
+      <h2>{esc(g.get("name", "(無題)"))}</h2>
+    </div>
+    <label class="approve"><input type="checkbox" class="approve-cb"
+      data-gid="{gi}" onchange="updateProgress()"> 確認して承認</label>
+  </header>
+  {intent_html}
+  <div class="group-body">
+    {"".join(hunks_html)}
+    <textarea class="cmt cmt-group" data-key="group:{gi}" rows="1"
+      placeholder="このグループ全体へのコメント…"></textarea>
+  </div>
+</section>""")
+
+    store_key = f"diffReview:{title}:{src.get('merge_base', src['mode'])[:12]}"
+
+    hunk_files = {hid: f["path"] for hid, (h, f) in hmap.items()}
+    # per-hunk PR-comment anchor: hid -> {path, line, side}
+    hunk_anchors = {}
+    for hid, (h, f) in hmap.items():
+        anchor = hunk_comment_anchor(h)
+        if anchor:
+            hunk_anchors[hid] = {"path": f["path"], **anchor}
+    pr_context = {
+        "mode": src["mode"],
+        "head": src.get("head", ""),
+        "base": src.get("base_branch", ""),
+    }
+    data_js = (
+        f"var COPY_ITEMS = {json.dumps(copy_items, ensure_ascii=False)};\n"
+        f"var GROUP_META = {json.dumps(group_meta, ensure_ascii=False)};\n"
+        f"var HUNK_FILES = {json.dumps(hunk_files, ensure_ascii=False)};\n"
+        f"var HUNK_ANCHORS = {json.dumps(hunk_anchors, ensure_ascii=False)};\n"
+        f"var PR_CONTEXT = {json.dumps(pr_context, ensure_ascii=False)};\n"
+        f"var PAGE_TITLE = {json.dumps(title, ensure_ascii=False)};"
+    )
+    extra_js = """
+var CKEY = KEY + ':comments';
+var comments = (function () {
+  try { return JSON.parse(localStorage.getItem(CKEY) || '{}'); }
+  catch (e) { return {}; }
+})();
+document.querySelectorAll('.cmt').forEach(function (t) {
+  if (comments[t.dataset.key]) t.value = comments[t.dataset.key];
+  t.addEventListener('input', function () {
+    comments[t.dataset.key] = t.value;
+    try { localStorage.setItem(CKEY, JSON.stringify(comments)); }
+    catch (e) {}
+  });
+});
+function toast(msg) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(function () { el.classList.remove('show'); }, 1800);
+}
+function buildSummary() {
+  var lines = ['## レビューまとめ: ' + PAGE_TITLE, ''];
+  ['指摘', '要改善'].forEach(function (kind) {
+    var items = COPY_ITEMS.filter(function (i) { return i.kind === kind; });
+    if (!items.length) return;
+    lines.push('### ' + kind + ' (レビューAI)');
+    items.forEach(function (i) {
+      lines.push('- [' + i.id + '] ' + i.file + ' — ' + i.text);
+    });
+    lines.push('');
+  });
+  var cmtLines = [];
+  document.querySelectorAll('.cmt').forEach(function (t) {
+    if (!t.value.trim()) return;
+    var key = t.dataset.key, label;
+    if (key.indexOf('group:') === 0) {
+      var g = GROUP_META[parseInt(key.slice(6), 10)];
+      label = 'グループ: ' + (g ? g.name : key);
+    } else {
+      var hid = key.slice(5);
+      label = hid + (HUNK_FILES[hid] ? ' ' + HUNK_FILES[hid] : '');
+    }
+    cmtLines.push('- [' + label + '] ' + t.value.trim());
+  });
+  if (cmtLines.length) {
+    lines.push('### レビュアーのコメント');
+    lines = lines.concat(cmtLines);
+    lines.push('');
+  }
+  var unapproved = [];
+  document.querySelectorAll('.approve-cb').forEach(function (cb) {
+    if (!cb.checked) {
+      var g = GROUP_META[parseInt(cb.dataset.gid, 10)];
+      unapproved.push(g ? g.name : cb.dataset.gid);
+    }
+  });
+  if (unapproved.length) {
+    lines.push('### 未承認グループ');
+    unapproved.forEach(function (n) { lines.push('- ' + n); });
+  }
+  return lines.join('\\n').trim() + '\\n';
+}
+function copyText(text, msg) {
+  function fallback(t) {
+    var ta = document.createElement('textarea');
+    ta.value = t;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  var done = function () { toast(msg); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done,
+      function () { fallback(text); done(); });
+  } else { fallback(text); done(); }
+}
+function copySummary() {
+  copyText(buildSummary(), 'レビューまとめをコピーしました');
+}
+// ---- PR review payload (for `gh api .../reviews`) -----------------------
+function selectedEvent() {
+  var r = document.querySelector('input[name="review-event"]:checked');
+  return r ? r.value : 'COMMENT';
+}
+function buildReviewPayload() {
+  // line comments come ONLY from what the human wrote in per-hunk boxes
+  var comments = [];
+  var skipped = [];
+  document.querySelectorAll('.cmt').forEach(function (t) {
+    var key = t.dataset.key;
+    if (key.indexOf('hunk:') !== 0 || !t.value.trim()) return;
+    var hid = key.slice(5);
+    var a = HUNK_ANCHORS[hid];
+    if (!a) { skipped.push(hid); return; }
+    comments.push({ path: a.path, line: a.line, side: a.side,
+                    body: t.value.trim() });
+  });
+  var event = selectedEvent();
+  var body = (document.getElementById('review-body') || {}).value || '';
+  var payload = {
+    event: event,          // APPROVE | REQUEST_CHANGES | COMMENT
+    body: body.trim(),
+    comments: comments,
+    _context: {
+      head: PR_CONTEXT.head, base: PR_CONTEXT.base, mode: PR_CONTEXT.mode,
+      title: PAGE_TITLE,
+      skipped_hunks: skipped   // hunks whose comment had no anchorable line
+    }
+  };
+  return payload;
+}
+function copyReviewPayload() {
+  var p = buildReviewPayload();
+  if (PR_CONTEXT.mode !== 'branch') {
+    toast('PR送信はbranchモードの差分でのみ利用できます');
+    return;
+  }
+  if (p.event === 'APPROVE' && p.comments.length === 0 && !p.body) {
+    // APPROVE with no body/comments is valid, but warn if truly empty
+  }
+  copyText(JSON.stringify(p, null, 2),
+    'PR送信用JSONをコピーしました（' + p.comments.length + '件の行コメント）');
+}
+"""
+
+    # PR review panel — only for branch-mode diffs (a PR reviews a branch)
+    if src["mode"] == "branch":
+        pr_panel_html = """
+  <div class="seclabel">03 / PRレビューを送信</div>
+  <section class="pr-panel">
+    <p class="pr-note">各ハンクのコメント欄に書いた内容が、対応する行への
+      PRレビューコメントになります（レビューAIの指摘は含まれません）。
+      判定を選び「PR送信用にコピー」で構造化JSONをコピーし、作業セッションに
+      戻して送信を依頼してください。</p>
+    <div class="pr-events">
+      <label><input type="radio" name="review-event" value="COMMENT" checked>
+        コメントのみ (COMMENT)</label>
+      <label><input type="radio" name="review-event" value="APPROVE">
+        承認 (APPROVE)</label>
+      <label><input type="radio" name="review-event" value="REQUEST_CHANGES">
+        変更を要求 (REQUEST_CHANGES)</label>
+    </div>
+    <textarea id="review-body" class="cmt" rows="2"
+      placeholder="レビュー全体のサマリーコメント（任意）…"></textarea>
+    <button class="copybtn pr-send" onclick="copyReviewPayload()">
+      PR送信用にコピー</button>
+  </section>"""
+    else:
+        pr_panel_html = ""
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(title)}</title>
+<style>
+:root {{
+  --bg:#f7f8fa; --card:#fff; --border:#e3e6eb; --fg:#20242c;
+  --muted:#6b7280; --accent:#2563eb;
+  --green:#15803d; --red:#c2333b;
+  --add-bg:#e9f7ee; --add-ln:#d4eedd; --del-bg:#fdeeee; --del-ln:#f7d9d9;
+  --hl-del:#f3b8bc; --hl-add:#b3e2c1;
+  --risk-high:#d64550; --risk-med:#e5a53a; --risk-low:#aab2bd;
+  --find-bg:#fdf2f2; --find-border:#e4a3a8;
+  --note-bg:#f4f7fe; --note-border:#b9cdf2;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; background:var(--bg); color:var(--fg);
+  font:14px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",
+  "Hiragino Kaku Gothic ProN","Noto Sans CJK JP",Meiryo,sans-serif; }}
+.wrap {{ max-width:1240px; margin:0 auto; padding:0 28px 100px; }}
+/* ---- header ---- */
+.topbar {{ position:sticky; top:0; z-index:20; background:var(--card);
+  border-bottom:1px solid var(--border);
+  box-shadow:0 1px 4px rgba(20,24,32,.04); }}
+.topbar-in {{ max-width:1240px; margin:0 auto; display:flex;
+  align-items:center; gap:18px; padding:14px 28px; }}
+.brand {{ font-family:var(--mono); font-size:12px; letter-spacing:.35em;
+  color:var(--muted); white-space:nowrap; }}
+.doc-title {{ font-size:18px; font-weight:700; line-height:1.4;
+  max-width:420px; }}
+.stats {{ font-family:var(--mono); font-size:13px; background:var(--bg);
+  border:1px solid var(--border); border-radius:8px; padding:6px 14px;
+  white-space:nowrap; }}
+.plus {{ color:var(--green); font-weight:700; }}
+.minus {{ color:var(--red); font-weight:700; }}
+.progress-wrap {{ margin-left:auto; display:flex; align-items:center;
+  gap:12px; white-space:nowrap; }}
+.progress {{ width:220px; height:6px; border-radius:3px; background:#e8eaef;
+  overflow:hidden; }}
+.progress > div {{ height:100%; width:0%; background:var(--green);
+  transition:width .25s; }}
+.helpbtn {{ width:32px; height:32px; border-radius:8px;
+  border:1px solid var(--border); background:var(--bg); cursor:pointer;
+  font-family:var(--mono); }}
+/* ---- section labels ---- */
+.seclabel {{ font-family:var(--mono); font-size:13px; letter-spacing:.25em;
+  color:var(--muted); margin:44px 0 16px; }}
+/* ---- overview ---- */
+.ovlist {{ background:var(--card); border:1px solid var(--border);
+  border-radius:12px; overflow:hidden; }}
+.ov {{ display:flex; gap:16px; align-items:center; padding:16px 20px;
+  border-left:4px solid var(--risk-low); text-decoration:none;
+  color:inherit; }}
+.ov + .ov {{ border-top:1px solid var(--border); }}
+.ov:hover {{ background:#fbfcfe; }}
+.ov.risk-high {{ border-left-color:var(--risk-high); }}
+.ov.risk-medium {{ border-left-color:var(--risk-med); }}
+.ov-name {{ font-weight:700; font-size:15px; }}
+.ov-desc {{ color:var(--muted); font-size:13px; }}
+.ov-side {{ margin-left:auto; display:flex; align-items:center; gap:10px;
+  white-space:nowrap; }}
+.pill {{ font-family:var(--mono); font-size:12px; padding:2px 10px;
+  border:1px solid var(--border); border-radius:7px; background:var(--bg);
+  color:var(--muted); }}
+.hunkct {{ font-family:var(--mono); font-size:13px; color:var(--muted); }}
+.findct {{ color:var(--red); font-weight:700; font-size:13px; }}
+.unclct {{ color:#956a00; font-weight:700; font-size:13px; }}
+.badge {{ font-size:12px; font-weight:700; padding:3px 10px;
+  border-radius:7px; }}
+.badge.high {{ background:#fbe3e5; color:#b02a33; }}
+.badge.medium {{ background:#fdf3d7; color:#956a00; }}
+.badge.low {{ background:#edeff3; color:#5b6472; }}
+/* ---- group detail ---- */
+.group {{ background:var(--card); border:1px solid var(--border);
+  border-left:4px solid var(--risk-low); border-radius:12px;
+  margin-bottom:28px; padding:20px 24px; }}
+.group.risk-high {{ border-left-color:var(--risk-high); }}
+.group.risk-medium {{ border-left-color:var(--risk-med); }}
+.group-head {{ display:flex; align-items:flex-start; gap:14px; }}
+.group-title {{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }}
+.group-title h2 {{ font-size:19px; margin:0; }}
+.approve {{ margin-left:auto; display:flex; align-items:center; gap:9px;
+  border:1px solid var(--border); border-radius:10px; padding:10px 18px;
+  font-weight:600; cursor:pointer; user-select:none; background:var(--card);
+  white-space:nowrap; }}
+.approve:has(input:checked) {{ background:#e9f7ee; border-color:#8fd0a4;
+  color:var(--green); }}
+.approve input {{ width:16px; height:16px; accent-color:var(--green); }}
+.intent {{ margin:10px 0 4px; }}
+.intent-label {{ color:var(--green); font-weight:700; }}
+.intent p {{ display:inline; margin:0; }}
+.intent p + p {{ display:block; margin-top:6px; }}
+/* ---- hunks ---- */
+.hunk {{ margin-top:18px; border:1px solid var(--border); border-radius:10px;
+  overflow:hidden; }}
+.hunk-head {{ display:flex; gap:12px; align-items:baseline;
+  background:#f2f4f8; border-bottom:1px solid var(--border);
+  padding:8px 14px; font-family:var(--mono); font-size:13px; }}
+.hid {{ color:var(--muted); }}
+.hpath {{ font-weight:700; }}
+.hrange {{ color:var(--muted); }}
+table.diff {{ width:100%; border-collapse:collapse; font-family:var(--mono);
+  font-size:12.5px; line-height:21px; }}
+table.diff td {{ padding:0 9px; vertical-align:top; }}
+td.ln {{ width:1%; min-width:46px; text-align:right; color:#9aa1ac;
+  user-select:none; border-right:1px solid #eef0f4; background:var(--card); }}
+td.code {{ white-space:pre-wrap; word-break:break-all; }}
+.sign {{ display:inline-block; width:13px; user-select:none;
+  color:var(--muted); }}
+tr.add td.code {{ background:var(--add-bg); }}
+tr.add td.ln {{ background:var(--add-ln); }}
+tr.del td.code {{ background:var(--del-bg); }}
+tr.del td.ln {{ background:var(--del-ln); }}
+tr.del .hl {{ background:var(--hl-del); border-radius:3px; }}
+tr.add .hl {{ background:var(--hl-add); border-radius:3px; }}
+tr.meta td.code {{ color:var(--muted); font-style:italic; }}
+/* ---- annotations ---- */
+.annot {{ display:flex; gap:12px; margin:10px 0 4px; border:1px solid;
+  border-radius:10px; padding:10px 14px; font-size:13px; }}
+.annot.hintent {{ background:#f4f1fb; border-color:#c8b8ec; }}
+.annot.note {{ background:var(--note-bg); border-color:var(--note-border); }}
+.annot.code {{ background:#eef8f1; border-color:#a8d8ba; }}
+.annot.finding {{ background:var(--find-bg); border-color:var(--find-border); }}
+.annot.unclear {{ background:#fdf7e7; border-color:#e2c078; }}
+.annot-label {{ font-weight:800; white-space:nowrap; }}
+.hintent .annot-label {{ color:#6d4bc0; }}
+.note .annot-label {{ color:var(--accent); }}
+.code .annot-label {{ color:var(--green); }}
+.finding .annot-label {{ color:var(--red); }}
+.unclear .annot-label {{ color:#956a00; }}
+.annot-body p {{ margin:0 0 4px; }}
+.annot-body p:last-child {{ margin:0; }}
+.annot-body ul {{ margin:4px 0; padding-left:20px; }}
+.cmt {{ display:block; width:100%; margin:10px 0 2px;
+  border:1px dashed var(--border); border-radius:8px; padding:8px 12px;
+  font:inherit; font-size:13px; resize:vertical; background:#fbfcfe;
+  color:var(--fg); min-height:38px; }}
+.cmt:focus {{ outline:none; border:1px solid var(--accent);
+  background:var(--card); }}
+.cmt-group {{ border-color:#cdd4de; }}
+.copybtn {{ border:1px solid var(--border); border-radius:8px;
+  background:var(--bg); padding:7px 14px; cursor:pointer; font-weight:600;
+  font-size:13px; white-space:nowrap; }}
+.copybtn:hover {{ background:#eef1f6; }}
+#toast {{ position:fixed; bottom:24px; left:50%;
+  transform:translateX(-50%); background:#20242c; color:#fff;
+  padding:10px 20px; border-radius:10px; opacity:0; transition:opacity .2s;
+  pointer-events:none; z-index:50; font-size:13px; }}
+#toast.show {{ opacity:1; }}
+code {{ background:rgba(148,158,175,.18); border-radius:4px; padding:1px 5px;
+  font-family:var(--mono); font-size:12px; }}
+pre {{ background:#f2f4f8; border-radius:8px; padding:10px; overflow-x:auto; }}
+pre code {{ background:none; padding:0; }}
+/* ---- PR review panel ---- */
+.pr-panel {{ background:var(--card); border:1px solid var(--border);
+  border-radius:12px; padding:20px 24px; margin-bottom:28px; }}
+.pr-note {{ color:var(--muted); font-size:13px; margin:0 0 14px; }}
+.pr-events {{ display:flex; flex-wrap:wrap; gap:10px 22px; margin-bottom:12px; }}
+.pr-events label {{ display:flex; align-items:center; gap:7px; font-weight:600;
+  cursor:pointer; }}
+.pr-events input {{ width:16px; height:16px; accent-color:var(--accent); }}
+.pr-send {{ margin-top:12px; }}
+/* ---- help dialog ---- */
+dialog {{ border:1px solid var(--border); border-radius:12px; padding:22px;
+  max-width:460px; }}
+dialog::backdrop {{ background:rgba(20,24,32,.35); }}
+dialog h3 {{ margin-top:0; }}
+.legend {{ display:grid; grid-template-columns:auto 1fr; gap:8px 14px;
+  align-items:center; font-size:13px; }}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="topbar-in">
+  <span class="brand">DIFF REVIEW</span>
+  <span class="doc-title">{esc(title)}</span>
+  <span class="stats">{len(files)} files / {n_hunks} hunks
+    <span class="plus">+{total_add}</span>
+    <span class="minus">-{total_del}</span></span>
+  <span class="progress-wrap">
+    <span class="progress"><div id="progress-fill"></div></span>
+    <span id="progress-text">承認 0/{len(groups)}</span>
+    <button class="copybtn" onclick="copySummary()">まとめをコピー</button>
+    {'<button class="copybtn" onclick="copyReviewPayload()">PR送信用にコピー</button>' if src["mode"] == "branch" else ""}
+    <button class="helpbtn" onclick="document.getElementById('help').showModal()">?</button>
+  </span>
+</div></div>
+<div class="wrap">
+  <div class="seclabel">対象: {src_line} · 生成 {esc(data["generated_at"])}
+    {"· 指摘 " + str(n_findings_total) + "件" if n_findings_total else ""}
+    {"· 要改善 " + str(n_unclear_total) + "件" if n_unclear_total else ""}</div>
+  <div class="seclabel">01 / 変更グループ一覧</div>
+  <div class="ovlist">{"".join(ov_items)}</div>
+  <div class="seclabel">02 / 変更グループ詳細</div>
+  {"".join(sections)}
+  {pr_panel_html}
+</div>
+<dialog id="help">
+  <h3>この画面の見方</h3>
+  <div class="legend">
+    <span class="badge high">要注意</span><span>挙動変更やリスクを含み、重点的に確認が必要</span>
+    <span class="badge medium">注意</span><span>広範囲だが機械的な変更。ざっと確認</span>
+    <span class="badge low">低リスク</span><span>docs・生成物など影響の小さい変更</span>
+    <span class="annot-label" style="color:var(--red)">指摘</span><span>レビューで対応を検討すべき点</span>
+    <span class="annot-label" style="color:#956a00">要改善</span><span>改善余地あり、または変更の意図が読み取れない箇所</span>
+    <span class="annot-label" style="color:#6d4bc0">意図</span><span>そのハンク固有の変更意図（グループ意図とは別）</span>
+    <span class="annot-label" style="color:var(--accent)">解説</span><span>変更の意図・背景の説明</span>
+    <span class="annot-label" style="color:var(--green)">コード解説</span><span>変更後のコードが何をしているかの読解補助</span>
+  </div>
+  <p>各グループの「確認して承認」をチェックすると上部の進捗に反映されます。
+  ハンクやグループのコメント欄に書いた内容は「まとめをコピー」で指摘・要改善と
+  一緒に Markdown 化され、そのまま作業セッションへ貼り付けられます。
+  承認状態とコメントはこのブラウザに保存されます。</p>
+  <form method="dialog"><button class="helpbtn" style="width:auto;padding:6px 16px">閉じる</button></form>
+</dialog>
+<div id="toast"></div>
+<script>
+var KEY = {json.dumps(store_key)};
+function loadState() {{
+  try {{ return JSON.parse(localStorage.getItem(KEY) || '{{}}'); }}
+  catch (e) {{ return {{}}; }}
+}}
+function updateProgress() {{
+  var cbs = document.querySelectorAll('.approve-cb');
+  var state = {{}};
+  var done = 0;
+  cbs.forEach(function (cb) {{
+    state[cb.dataset.gid] = cb.checked;
+    if (cb.checked) done++;
+  }});
+  document.getElementById('progress-text').textContent =
+    '承認 ' + done + '/' + cbs.length;
+  document.getElementById('progress-fill').style.width =
+    (cbs.length ? (100 * done / cbs.length) : 0) + '%';
+  try {{ localStorage.setItem(KEY, JSON.stringify(state)); }} catch (e) {{}}
+}}
+(function () {{
+  var state = loadState();
+  document.querySelectorAll('.approve-cb').forEach(function (cb) {{
+    if (state[cb.dataset.gid]) cb.checked = true;
+  }});
+  updateProgress();
+}})();
+{data_js}
+{extra_js}
+</script>
+</body>
+</html>"""
+
+    out = args.out or os.path.join(workdir, "diff_review.html")
+    with open(out, "w") as fp:
+        fp.write(html_doc)
+    print(out)
+
+
+# ----------------------------------------------------------------------- cli
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pe = sub.add_parser("extract", help="compute and parse the diff")
+    pe.add_argument("--mode", default="branch",
+                    choices=["branch", "unstaged", "staged", "worktree"])
+    pe.add_argument("--base", help="base branch (branch mode; auto-detected)")
+    pe.add_argument("--head", help="head ref (branch mode; default HEAD)")
+    pe.add_argument("--workdir", help="output dir (default: mktemp)")
+    pe.set_defaults(func=cmd_extract)
+
+    pr = sub.add_parser("render", help="render the review HTML")
+    pr.add_argument("--workdir", required=True)
+    pr.add_argument("--out", help="output HTML path")
+    pr.set_defaults(func=cmd_render)
+
+    args = p.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
