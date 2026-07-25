@@ -29,6 +29,9 @@
     chmod -R u+w ${config.home.homeDirectory}/.codex/skills 2>/dev/null || true
     cp -r ${./claude/codex/skills}/. ${config.home.homeDirectory}/.codex/skills/
     # shared skills (single source in claude/skills, deployed to both claude and codex)
-    cp -r ${./claude/skills/diff-explain} ${config.home.homeDirectory}/.codex/skills/
+    # copy CONTENTS into a named dir so the target is ~/.codex/skills/diff-explain
+    # (not the nix store's <hash>-diff-explain path)
+    mkdir -p ${config.home.homeDirectory}/.codex/skills/diff-explain
+    cp -r ${./claude/skills/diff-explain}/. ${config.home.homeDirectory}/.codex/skills/diff-explain/
   '';
 }
