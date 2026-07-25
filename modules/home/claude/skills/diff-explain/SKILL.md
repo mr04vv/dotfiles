@@ -50,9 +50,17 @@ Pick the mode from what the user asked for:
 
 Add `--workdir <dir>` to reuse a directory when regenerating.
 
+**解説量 `--detail {small|medium|large}`** (default `medium`): 生成する解説
+プロセ（意図・コード解説・解説）の分量レベル。ユーザーが「軽く/ざっくり」
+「詳しく/しっかり」等と言ったら対応するレベルを選ぶ。extract 時に保存され、
+ページヘッダーにも表示される。§3 のレベル定義に従って explanations.json を
+書くこと。
+
 The script prints the workdir and a **hunk index**: every file with its
 hunks and their global ids (`h001`, `h002`, …). Those ids are what you
-assign to groups in `explanations.json`. It also writes `raw.diff` and
+assign to groups in `explanations.json`. 各ファイルには `[status]` と行数、
+そして lockfile・vendored deps・ビルド生成物・生成コードには
+**`(generated — 解説不要)`** マークが付く。It also writes `raw.diff` and
 `diff_data.json`. If it exits with "No differences", report that and stop.
 
 ### 2. Read the diff and plan the groups
@@ -118,6 +126,30 @@ Write `<workdir>/explanations.json`:
   ]
 }
 ```
+
+**解説量レベル (`--detail`)** — extract 出力の "detail level" に従って解説系
+(hunk_intents / code_notes / hunk_notes) の分量を調整する。指摘/要改善
+(findings/unclear) は「言うべきことは言う」ものなのでレベルの影響を受けない
+（small でも重要な指摘は必ず出す）。
+
+- **small** — 要点のみ。グループ `intent` は 1〜2 文。hunk 単位の解説は
+  *本当に非自明な箇所だけ* に絞り、多くの hunk は無注釈でよい。1 注釈は
+  1 文程度。「読めば分かる」変更は書かない。
+- **medium**（既定）— バランス重視。`intent` は 3〜5 文（§ intent の指針
+  どおり）。非自明な hunk には 2〜4 文の解説を付ける。自明な hunk は省略。
+- **large** — 手厚く。`intent` を厚めに書き、変更のある hunk はできるだけ
+  意図・コード解説・解説を付け、設計判断・境界条件・代替案・影響範囲まで
+  踏み込む。学習/引き継ぎ目的に向く。ただし large でも自明な 1 行 hunk を
+  無理に膨らませない（水増しは全レベル共通で avoid）。
+
+**生成物・lock ファイルは解説しない** — extract で `(generated — 解説不要)`
+と付いた hunk（lockfile・vendored deps・ビルド生成物・生成コード）には
+意図・コード解説・解説を **付けない**。差分としてページには出るが、注釈は
+不要。これらは低リスクグループ（例「依存の更新」「生成物」）に `tags:
+["deps"]` や `["generated"]` でまとめ、`intent` に「lock ファイルの機械的
+更新」等の一言だけ添えれば十分。findings/unclear も、生成物に実質的な
+レビュー価値がある稀なケースを除き付けない。判定は extract のマークに従う
+（自分でパスを再判定しなくてよい）。
 
 Field guidance:
 
@@ -329,10 +361,12 @@ label, the title, `N files / M hunks +A −D`, an approval progress bar
 (承認 X/Y), a まとめをコピー button, and a "?" button with a legend. Section
 01 lists the groups in risk order — left border colored by risk
 (red/amber/gray), description, tags, hunk count, 指摘/要改善 counts — each
-linking to its detail card in section 02. Detail cards have the risk badge,
-意図, and a 確認して承認 checkbox. Hunks render with their id, file path,
-`@@` range, two line-number columns, and intraline highlighting of changed
-spans. Annotation boxes render in a fixed order — 意図 (purple, hunk-level
+linking to its detail card in section 02. 対象行の下のメタ行に、対象範囲・
+生成日時・**解説量レベル (small/medium/large)**・指摘/要改善件数が出る。
+Detail cards have the risk badge, 意図, and a 確認して承認 checkbox. Hunks
+render with their id, file path, `@@` range, two line-number columns, and
+intraline highlighting of changed spans; lockfile/生成物の hunk はヘッダーに
+`generated` バッジが付く（解説対象外の目印）。 Annotation boxes render in a fixed order — 意図 (purple, hunk-level
 intent), コード解説 (green, what the code does), 指摘 (red), 要改善 (amber),
 解説 (blue, why). 行キー (`h012:58`) で付けた注釈は該当行の **直下に
 インライン表示**、ハンクキー (`h012`) の注釈はハンクの下にまとめて表示される。
