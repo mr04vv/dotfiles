@@ -832,54 +832,63 @@ function toggleLineComment(btn) {
                     row.dataset.cside);
 }
 // ---- drag selection on the new-side line-number column -----------------
+// Everything is scoped to the START cell's table so overlapping line numbers
+// in other hunks/files can't be mis-selected. We paint by DOM position
+// between the start and current rows (not by numeric line value).
 (function () {
-  var dragging = false, anchorLn = null, curRow = null;
-  function cells() { return document.querySelectorAll('td.lnum'); }
+  var startCell = null, startTable = null;
   function clearSel() {
     document.querySelectorAll('tr.range-sel').forEach(function (r) {
       r.classList.remove('range-sel');
     });
   }
-  function paint(a, b, table) {
+  // paint every lnum-bearing row between two rows (inclusive) in one table
+  function paintBetween(rowA, rowB, table) {
     clearSel();
-    var lo = Math.min(a, b), hi = Math.max(a, b);
-    table.querySelectorAll('td.lnum').forEach(function (c) {
-      var v = parseInt(c.dataset.lnum, 10);
-      if (v >= lo && v <= hi) c.closest('tr').classList.add('range-sel');
-    });
+    var rows = Array.prototype.slice.call(
+      table.querySelectorAll('tr')).filter(function (r) {
+        return r.querySelector(':scope > td.lnum');
+      });
+    var ia = rows.indexOf(rowA), ib = rows.indexOf(rowB);
+    if (ia < 0 || ib < 0) return;
+    var lo = Math.min(ia, ib), hi = Math.max(ia, ib);
+    for (var i = lo; i <= hi; i++) rows[i].classList.add('range-sel');
+  }
+  function lnumCellFrom(e) {
+    return e.target && e.target.closest ? e.target.closest('td.lnum') : null;
   }
   document.addEventListener('mousedown', function (e) {
-    var cell = e.target.closest && e.target.closest('td.lnum');
+    var cell = lnumCellFrom(e);
     if (!cell) return;
-    e.preventDefault();
-    dragging = true;
-    anchorLn = parseInt(cell.dataset.lnum, 10);
-    curRow = cell.closest('tr');
-    paint(anchorLn, anchorLn, cell.closest('table'));
+    e.preventDefault();                 // stop native text selection
+    startCell = cell;
+    startTable = cell.closest('table');
+    startTable.classList.add('dragging');
+    paintBetween(cell.closest('tr'), cell.closest('tr'), startTable);
   });
-  document.addEventListener('mouseover', function (e) {
-    if (!dragging) return;
-    var cell = e.target.closest && e.target.closest('td.lnum');
-    if (!cell) return;
-    curRow = cell.closest('tr');
-    paint(anchorLn, parseInt(cell.dataset.lnum, 10), cell.closest('table'));
+  document.addEventListener('mousemove', function (e) {
+    if (!startCell) return;
+    var cell = lnumCellFrom(e);
+    if (!cell || cell.closest('table') !== startTable) return;
+    paintBetween(startCell.closest('tr'), cell.closest('tr'), startTable);
   });
   document.addEventListener('mouseup', function (e) {
-    if (!dragging) return;
-    dragging = false;
-    if (anchorLn == null || !curRow) { clearSel(); return; }
-    var endLn = parseInt(curRow.querySelector('td.lnum').dataset.lnum, 10);
-    var lo = Math.min(anchorLn, endLn), hi = Math.max(anchorLn, endLn);
-    // resolve the end row (the higher line number) as the comment anchor
-    var endRow = null, path = null, side = null;
-    document.querySelectorAll('tr[data-cline]').forEach(function (r) {
-      if (parseInt(r.dataset.cline, 10) === hi) {
-        endRow = r; path = r.dataset.cpath; side = r.dataset.cside;
-      }
-    });
+    if (!startCell) return;
+    var sc = startCell, tbl = startTable;
+    startCell = null; startTable = null;
+    if (tbl) tbl.classList.remove('dragging');
+    // end cell = the lnum cell under the pointer, else the start cell
+    var endCell = lnumCellFrom(e);
+    if (!endCell || endCell.closest('table') !== tbl) endCell = sc;
+    var a = parseInt(sc.dataset.lnum, 10),
+        b = parseInt(endCell.dataset.lnum, 10);
+    var loLn = Math.min(a, b), hiLn = Math.max(a, b);
+    // the end row (anchor) is whichever of the two cells has the higher line
+    var endRow = (a >= b ? sc : endCell).closest('tr');
     clearSel();
-    if (!endRow) return;
-    insertLineComment(endRow, path, hi, side, lo === hi ? null : lo);
+    var path = endRow.dataset.cpath, side = endRow.dataset.cside;
+    if (path == null) return;
+    insertLineComment(endRow, path, hiLn, side, loLn === hiLn ? null : loLn);
   });
 })();
 // restore saved line comments: group keys by their target row, rebuild DOM
@@ -1222,6 +1231,8 @@ td.ln {{ width:1%; min-width:46px; text-align:right; color:#9aa1ac;
   user-select:none; border-right:1px solid #eef0f4; background:var(--card); }}
 td.ln.lnum {{ cursor:pointer; }}
 td.ln.lnum:hover {{ background:#dbe3f4; color:var(--accent); }}
+/* during a drag, suppress native text selection across the table */
+table.diff.dragging {{ user-select:none; -webkit-user-select:none; }}
 tr.range-sel td.code {{ background:#e0eaff; }}
 tr.range-sel td.ln {{ background:#cfddff; }}
 td.code {{ white-space:pre-wrap; word-break:break-all; position:relative; }}
