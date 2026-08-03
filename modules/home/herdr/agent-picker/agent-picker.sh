@@ -349,7 +349,34 @@ cmd_ui() {
   [ -n "$selection" ] || exit 0
 
   IFS="$SEP" read -r kind id _ <<<"$selection"
+
+  # An overlay pane zooms the tab it covers, and that zoom is only released once
+  # the overlay is gone. Focusing while it is still up leaves the destination
+  # tab zoomed, so this pane is closed first -- and since the close is
+  # asynchronous, the focus waits for the zoom to actually clear.
+  #
+  # HERDR_PANE_ID is set by herdr for the pane the plugin runs in; without it
+  # there is nothing to close and the focus just goes ahead.
+  if [ -n "${HERDR_PANE_ID:-}" ]; then
+    herdr pane close "$HERDR_PANE_ID" >/dev/null 2>&1 || true
+    wait_for_unzoom
+  fi
+
   cmd_focus "$kind" "$id"
+}
+
+# Poll until no tab reports itself zoomed, so a focus is not applied while the
+# overlay's zoom is still in effect. Bounded so a stuck overlay cannot hang the
+# picker; focusing into a zoomed tab is a cosmetic problem, not a fatal one.
+wait_for_unzoom() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    case "$(api_call pane.layout '{}')" in
+      *'"zoomed":true'*) ;;
+      *) return 0 ;;
+    esac
+    sleep 0.05
+  done
 }
 
 main() {
