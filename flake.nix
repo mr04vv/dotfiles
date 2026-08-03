@@ -86,6 +86,8 @@
             nixpkgs.overlays = [
               (import ./overlays/mo.nix)
               (import ./overlays/gh.nix)
+              (import ./overlays/terminal-browser.nix)
+              (import ./overlays/pipx.nix)
             ];
           }
 
@@ -147,6 +149,8 @@
             nixpkgs.overlays = [
               (import ./overlays/mo.nix)
               (import ./overlays/gh.nix)
+              (import ./overlays/terminal-browser.nix)
+              (import ./overlays/pipx.nix)
             ];
           }
 
@@ -172,6 +176,8 @@
             overlays = [
               (import ./overlays/mo.nix)
               (import ./overlays/gh.nix)
+              (import ./overlays/terminal-browser.nix)
+              (import ./overlays/pipx.nix)
             ];
           };
         in
