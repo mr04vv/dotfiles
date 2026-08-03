@@ -9,7 +9,10 @@
 # the selection is dispatched back through the matching `herdr ... focus`.
 set -euo pipefail
 
-readonly SELF="${BASH_SOURCE[0]}"
+# Absolute, because fzf's reload/preview bindings and the detached focus child
+# all re-invoke this script from a working directory we do not control.
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+readonly SELF
 
 # Field separator for row payloads. Tab is safe here because herdr labels come
 # from workspace/tab names and terminal titles, none of which can contain one.
@@ -351,18 +354,30 @@ cmd_ui() {
   IFS="$SEP" read -r kind id _ <<<"$selection"
 
   # An overlay pane zooms the tab it covers, and that zoom is only released once
-  # the overlay is gone. Focusing while it is still up leaves the destination
-  # tab zoomed, so this pane is closed first -- and since the close is
-  # asynchronous, the focus waits for the zoom to actually clear.
+  # the overlay is gone -- focusing while it is still up leaves the destination
+  # tab zoomed. So the pane has to close first, but closing it also tears down
+  # this very process, which would kill the focus along with it.
   #
-  # HERDR_PANE_ID is set by herdr for the pane the plugin runs in; without it
-  # there is nothing to close and the focus just goes ahead.
+  # The focus is therefore handed to a detached child that outlives the pane: it
+  # waits for the zoom to clear, then dispatches. HERDR_PANE_ID is set by herdr
+  # for the pane a plugin runs in; without it nothing needs closing and the
+  # focus can happen inline.
   if [ -n "${HERDR_PANE_ID:-}" ]; then
+    # nohup rather than setsid, which macOS does not ship.
+    nohup "$SELF" focus-deferred "$kind" "$id" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
     herdr pane close "$HERDR_PANE_ID" >/dev/null 2>&1 || true
-    wait_for_unzoom
+    exit 0
   fi
 
   cmd_focus "$kind" "$id"
+}
+
+# Wait for the picker's own pane to disappear, then focus. Only ever run as a
+# detached child of cmd_ui, which is closing that pane as this starts.
+cmd_focus_deferred() {
+  wait_for_unzoom
+  cmd_focus "$@"
 }
 
 # Poll until no tab reports itself zoomed, so a focus is not applied while the
@@ -386,7 +401,8 @@ main() {
     list)        cmd_list ;;
     list-agents) cmd_list_agents ;;
     preview)     shift; cmd_preview "$@" ;;
-    focus)       shift; cmd_focus "$@" ;;
+    focus)          shift; cmd_focus "$@" ;;
+    focus-deferred) shift; cmd_focus_deferred "$@" ;;
     *)           die "unknown subcommand: ${1:-}" ;;
   esac
 }
