@@ -47,6 +47,18 @@
         "matcher": "Bash"
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bash '@HOME@/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -127,8 +139,8 @@
       "Read(.env.*)",
       "Read(id_rsa)",
       "Read(id_ed25519)",
-      "Write(.env*)",
-      "Write(**/secrets/**)",
+      "Edit(.env*)",
+      "Edit(**/secrets/**)",
       "Bash(pnpm publish *)",
       "Bash(nr publish *)",
       "Read(~/.ssh/**)",
