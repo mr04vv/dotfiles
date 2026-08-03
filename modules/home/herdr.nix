@@ -92,23 +92,32 @@
 
     # zellij tab mode: n=new, x=close, r=rename. herdr's defaults put new_tab on
     # prefix+c, which collides with rename_pane above, so tabs move to the
-    # shifted variants and keep the same letters.
-    new_tab = "prefix+shift+n"
+    # shifted variants and keep the same letters. new_tab is the exception: both
+    # prefix+n and prefix+shift+n go to workspace/resize below, so it sits on t
+    # alongside rename_tab.
+    new_tab = "prefix+t"
     close_tab = "prefix+shift+x"
     rename_tab = "prefix+shift+t"
 
-    # prefix+shift+n is new_tab above, which is herdr's default for
-    # new_workspace, so that action is moved here to keep it reachable. herdr
-    # silently disables the losing action on a duplicate, so it needs a key of
-    # its own rather than being left to collide.
-    new_workspace = "prefix+shift+c"
+    # herdr defaults new_workspace to prefix+shift+n; the unshifted letter is
+    # used instead so it pairs with resize_mode below. herdr silently disables
+    # the losing action on a duplicate, so every action needs a key of its own
+    # rather than being left to collide.
+    new_workspace = "prefix+n"
 
     # split_vertical takes prefix+r, herdr's default for resize_mode, so resize
-    # moves to the zellij letter for its own resize mode.
-    resize_mode = "prefix+n"
+    # moves to the shifted counterpart of new_workspace above.
+    resize_mode = "prefix+shift+n"
 
     # zellij "Ctrl p" then w opens the tab/session switcher; herdr's equivalent
     # picker keeps the same letter.
     workspace_picker = "prefix+w"
+
+    # Navigate mode (prefix+g / prefix+w) walks the workspace list with the arrow
+    # keys by default. j/k are bound so the list is driven vi-style, matching the
+    # j/k herdr already uses for navigate_pane_down/up. These are navigate-mode
+    # local shortcuts and are independent from the focus_pane_* binds above.
+    navigate_workspace_up = "k"
+    navigate_workspace_down = "j"
   '';
 }
