@@ -7,7 +7,6 @@
     settings = {
       # Disable cloud sync
       auto_sync = false;
-      sync_address = "";
 
       # Search settings
       search_mode = "fuzzy";
