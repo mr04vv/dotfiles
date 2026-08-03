@@ -248,25 +248,26 @@ cmd_focus() {
   case "$kind" in
     workspace) herdr workspace focus "$id" >/dev/null ;;
     tab)       herdr tab focus "$id" >/dev/null ;;
-    # `herdr pane focus` only moves directionally and takes no target id, so a
-    # pane is reached by focusing its tab first. `agent focus` then lands on the
-    # exact pane, but it errors on panes with no detected agent -- for those the
-    # tab focus is already the closest herdr can get.
-    pane)
-      local tab
-      tab="$(pane_tab_id "$id")"
-      [ -n "$tab" ] && herdr tab focus "$tab" >/dev/null 2>&1
-      herdr agent focus "$id" >/dev/null 2>&1 || true
-      ;;
+    pane)      api_call pane.focus "{\"pane_id\":\"$id\"}" >/dev/null ;;
     *)         die "unknown row kind: $kind" ;;
   esac
 }
 
-# Resolve the tab that owns a pane. Pane ids look like "w1:p2" and carry no tab
-# component, so the mapping has to come back from herdr.
-pane_tab_id() {
-  herdr pane list 2>/dev/null |
-    jq -r --arg id "$1" '.result.panes[] | select(.pane_id == $id) | .tab_id' |
+# Call a herdr socket API method directly.
+#
+# The CLI's `pane focus` only moves to a *neighboring* pane and takes a
+# direction rather than an id, and `agent focus` rejects panes with no detected
+# agent. The socket exposes a `pane.focus` that accepts a pane id outright --
+# which is how the built-in navigator jumps straight to any pane -- so this
+# reaches past the CLI to use it.
+api_call() {
+  local method="$1" params="$2" socket="${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}"
+
+  [ -S "$socket" ] || die "herdr socket not found at $socket"
+  require nc
+
+  printf '{"id":"agent-picker","method":"%s","params":%s}\n' "$method" "$params" |
+    nc -U "$socket" 2>/dev/null |
     head -1
 }
 
