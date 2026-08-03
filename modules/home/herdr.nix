@@ -1,6 +1,26 @@
-{ ... }:
+{ config, lib, pkgs, ... }:
 
+let
+  # Deployed outside the nix store because herdr resolves a plugin's commands
+  # relative to its root and needs that tree writable for its own bookkeeping.
+  pluginRoot = "${config.home.homeDirectory}/.config/herdr/plugins/local/agent-picker";
+in
 {
+  home.file."${pluginRoot}/herdr-plugin.toml".source = ./herdr/agent-picker/herdr-plugin.toml;
+  home.file."${pluginRoot}/agent-picker.sh" = {
+    source = ./herdr/agent-picker/agent-picker.sh;
+    executable = true;
+  };
+
+  # `herdr plugin link` records the plugin in herdr's own state, which nix
+  # cannot declare directly. Linking is idempotent, so it is re-run on every
+  # activation; the guard keeps it quiet when herdr is not installed yet.
+  home.activation.herdrAgentPicker = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    if [ -x "${pkgs.herdr}/bin/herdr" ]; then
+      ${pkgs.herdr}/bin/herdr plugin link "${pluginRoot}" >/dev/null 2>&1 || true
+    fi
+  '';
+
   # herdr has no home-manager module, so the config file is written directly
   # (same approach as zellij.nix). The package itself lives in
   # modules/home/default.nix.
@@ -128,6 +148,17 @@
     # local shortcuts and are independent from the focus_pane_* binds above.
     navigate_workspace_up = "k"
     navigate_workspace_down = "j"
+
+    # Custom picker from herdr/agent-picker. The built-in navigator lists
+    # workspace -> tab -> agent but never the agent's terminal title, which is
+    # the only thing distinguishing several Claude panes from each other.
+    # prefix+p sits next to the built-in prefix+w picker rather than replacing
+    # it, since the built-in still renders the tree more compactly.
+    [[keys.command]]
+    key = "prefix+p"
+    type = "plugin_action"
+    command = "agent-picker.open"
+    description = "pick a workspace, tab, or agent by title"
 
     # Sidebar agent rows. The default rows show only where an agent lives
     # (workspace/tab) and which agent it is, which does not say what any of them
