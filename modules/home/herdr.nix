@@ -20,6 +20,12 @@
     # the host terminal emitting them, so these may need swapping for ctrl+letter
     # chords if the terminal swallows them.
 
+    # Prefix for the actions left at their defaults. ctrl+p shadows "previous
+    # history entry" in zsh and completion-cycling in Neovim for panes herdr
+    # captures the key from, which is accepted here in exchange for keeping the
+    # prefix off ctrl+b.
+    prefix = "ctrl+p"
+
     # Pane focus -- mirrors zellij's "Alt [" / "Alt ]".
     focus_pane_left = "alt+["
     focus_pane_right = "alt+]"
