@@ -1,23 +1,24 @@
 { config, lib, pkgs, ... }:
 
 let
-  # Deployed outside the nix store because herdr resolves a plugin's commands
-  # relative to its root and needs that tree writable for its own bookkeeping.
-  pluginRoot = "${config.home.homeDirectory}/.config/herdr/plugins/local/pane-navigator";
+  # Own plugin, developed here and published separately:
+  # https://github.com/mr04vv/herdr-pane-navigator
+  paneNavigator = {
+    source = "mr04vv/herdr-pane-navigator";
+    # Pinned so a rebuild cannot silently pull a different version. Bump this
+    # after tagging a release upstream.
+    ref = "v0.1.0";
+  };
 in
 {
-  home.file."${pluginRoot}/herdr-plugin.toml".source = ./herdr/pane-navigator/herdr-plugin.toml;
-  home.file."${pluginRoot}/pane-navigator.sh" = {
-    source = ./herdr/pane-navigator/pane-navigator.sh;
-    executable = true;
-  };
-
-  # `herdr plugin link` records the plugin in herdr's own state, which nix
-  # cannot declare directly. Linking is idempotent, so it is re-run on every
-  # activation; the guard keeps it quiet when herdr is not installed yet.
+  # herdr owns its plugin tree (it fetches, unpacks, and records plugins under
+  # ~/.config/herdr/plugins), so nix cannot declare the installed state
+  # directly. Installing is idempotent for an already-present ref, so this just
+  # re-runs on activation; the guard keeps it quiet when herdr is absent.
   home.activation.herdrPaneNavigator = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     if [ -x "${pkgs.herdr}/bin/herdr" ]; then
-      ${pkgs.herdr}/bin/herdr plugin link "${pluginRoot}" >/dev/null 2>&1 || true
+      ${pkgs.herdr}/bin/herdr plugin install ${paneNavigator.source} \
+        --ref ${paneNavigator.ref} --yes >/dev/null 2>&1 || true
     fi
   '';
 
