@@ -24,76 +24,117 @@ require() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
-# Emit "<kind> <id> <status> <label> <meta>" rows, tab separated. The caller
-# keeps the first two fields for dispatch and renders the rest.
+# Emit "<kind> <id> <status> <prefix> <label> <meta>" rows, tab separated.
+#
+# Rows come out as a workspace -> tab -> pane tree. Structure wins over urgency
+# for placement, but urgency still decides order *within* each level, and a
+# parent inherits the urgency of its most urgent descendant -- so a workspace
+# holding a blocked agent still floats to the top without breaking the nesting.
+#
+# The leaf level is panes rather than agents: `herdr pane list` is a superset of
+# `herdr agent list` (agent panes come back with their titles either way), so
+# using it keeps plain shells visible instead of silently dropping them.
 collect_rows() {
-  local ws_json tab_json agent_json ws_labels
+  local ws_json tab_json pane_json
 
   ws_json="$(herdr workspace list 2>/dev/null)" ||
     die 'herdr workspace list failed; is the server running?'
-  tab_json="$(herdr tab list 2>/dev/null)" || tab_json=''
-  agent_json="$(herdr agent list 2>/dev/null)" || agent_json=''
+  tab_json="$(herdr tab list 2>/dev/null)" || tab_json='{"result":{"tabs":[]}}'
+  pane_json="$(herdr pane list 2>/dev/null)" || pane_json='{"result":{"panes":[]}}'
 
-  # Workspace labels caption the tab and agent rows, so they are resolved once
-  # here and joined inside jq rather than re-queried per row.
-  ws_labels="$(printf '%s' "$ws_json" | jq -c '
-    [.result.workspaces[] | {key: .workspace_id, value: .label}] | from_entries
-  ')"
+  jq -rn \
+    --arg sep "$SEP" \
+    --argjson ws "$ws_json" \
+    --argjson tabs "$tab_json" \
+    --argjson panes "$pane_json" '
+    def urgency:
+      { "blocked": 0, "done": 1, "working": 2, "idle": 3 }[.] // 4;
 
-  printf '%s' "$ws_json" | jq -r --arg sep "$SEP" '
-    .result.workspaces[]
-    | [ "workspace",
-        .workspace_id,
-        (.agent_status // "unknown"),
-        .label,
-        ((.tab_count | tostring) + " tabs, " + (.pane_count | tostring) + " panes")
-      ] | join($sep)
-  '
+    # Box-drawing prefixes. The last child of a level gets the corner glyph and
+    # its descendants indent with blanks, so vertical bars only continue where
+    # another sibling actually follows.
+    def branch(is_last): if is_last then "└─ " else "├─ " end;
+    def spine(is_last):  if is_last then "   "  else "│  " end;
 
-  if [ -n "$tab_json" ]; then
-    printf '%s' "$tab_json" | jq -r --arg sep "$SEP" --argjson ws "$ws_labels" '
-      .result.tabs[]
-      | [ "tab",
-          .tab_id,
-          (.agent_status // "unknown"),
-          (($ws[.workspace_id] // .workspace_id) + " / " + .label),
-          ((.pane_count | tostring) + " panes")
+    ($panes.result.panes // []) as $all_panes
+    | ($tabs.result.tabs // []) as $all_tabs
+
+    # Only panes carry a real status; tabs and workspaces borrow the minimum
+    # urgency of whatever lives inside them.
+    | ( [ $all_panes[] | { key: .tab_id, value: (.agent_status // "unknown" | urgency) } ]
+        | group_by(.key)
+        | map({ key: .[0].key, value: (map(.value) | min) })
+        | from_entries ) as $tab_urgency
+    | ( [ $all_panes[] | { key: .workspace_id, value: (.agent_status // "unknown" | urgency) } ]
+        | group_by(.key)
+        | map({ key: .[0].key, value: (map(.value) | min) })
+        | from_entries ) as $ws_urgency
+
+    | [ ($ws.result.workspaces // [])[]
+        | { sort: [ ($ws_urgency[.workspace_id] // 5), (.number // 0) ], w: . } ]
+    | sort_by(.sort)
+    | to_entries[]
+    | (.key > 0) as $needs_spacer
+    | .value.w as $w
+    | (
+        # A blank spacer above every workspace but the first. fzf keeps these as
+        # selectable rows, so they carry the "spacer" kind and the dispatcher
+        # ignores them rather than trying to focus something.
+        if $needs_spacer then ([ "spacer", "", "", "", "", "" ] | join($sep)) else empty end
+      ),
+      (
+        [ "workspace", $w.workspace_id, ($w.agent_status // "unknown"), "",
+          $w.label,
+          (($w.tab_count | tostring) + " tabs, " + ($w.pane_count | tostring) + " panes")
         ] | join($sep)
-    '
-  fi
-
-  if [ -n "$agent_json" ]; then
-    # terminal_title_stripped is the whole point of this picker: it is the only
-    # field describing what an agent is actually doing. Agents that have not set
-    # a title fall back to their cwd basename.
-    #
-    # Rows are ordered by how much they want attention -- blocked agents are
-    # stuck on a prompt, done ones just finished a turn, working ones need
-    # nothing. The focused agent sorts last: it is the one pane you are already
-    # looking at, so enter should jump somewhere else.
-    printf '%s' "$agent_json" | jq -r --arg sep "$SEP" --argjson ws "$ws_labels" '
-      def urgency:
-        { "blocked": 0, "done": 1, "working": 2, "idle": 3 }[.] // 4;
-
-      [ .result.agents[]
-        | ((.terminal_title_stripped // "") | gsub("^\\s+|\\s+$"; "")) as $title
-        | (.agent_status // "unknown") as $status
-        | { pane_id,
-            status: $status,
-            label: (($ws[.workspace_id] // .workspace_id) + " / "
-                     + (if $title == "" then ((.cwd // "/") | split("/") | last)
-                        else $title end)),
-            agent,
-            sort_key: [ (if .focused then 1 else 0 end),
-                        ($status | urgency),
-                        (.workspace_id // ""),
-                        (.pane_id // "") ]
-          }
-      ]
-      | sort_by(.sort_key)[]
-      | [ "agent", .pane_id, .status, .label, .agent ] | join($sep)
-    '
-  fi
+      ),
+      (
+        [ $all_tabs[] | select(.workspace_id == $w.workspace_id)
+          | { sort: [ ($tab_urgency[.tab_id] // 5), (.number // 0) ], t: . } ]
+        | sort_by(.sort)
+        | . as $sorted
+        | to_entries[]
+        | (.key == ($sorted | length - 1)) as $tab_last
+        | .value.t as $t
+        | (
+            # An unnamed tab falls back to its own number ("1", "2", ...), which
+            # says nothing. Borrow a title from inside it instead, preferring an
+            # agent pane since that describes actual work; the number is kept as
+            # the meta column so the tab is still identifiable.
+            ( [ $all_panes[]
+                | select(.tab_id == $t.tab_id)
+                | select(((.terminal_title_stripped // "") | gsub("^\\s+|\\s+$"; "")) != "")
+                | { rank: (if (.agent_status // "unknown") != "unknown" then 0 else 1 end),
+                    title: (.terminal_title_stripped | gsub("^\\s+|\\s+$"; "")) } ]
+              | sort_by(.rank) | first | .title // "" ) as $borrowed
+            | (if ($t.label | test("^[0-9]+$")) and $borrowed != ""
+               then $borrowed else $t.label end) as $tab_label
+            | [ "tab", $t.tab_id, ($t.agent_status // "unknown"), branch($tab_last),
+              $tab_label,
+              (if ($t.label | test("^[0-9]+$")) and $borrowed != ""
+               then ("#" + $t.label + " · " + ($t.pane_count | tostring) + " panes")
+               else (($t.pane_count | tostring) + " panes") end)
+            ] | join($sep)
+          ),
+          (
+            [ $all_panes[] | select(.tab_id == $t.tab_id)
+              | { sort: [ (if .focused then 1 else 0 end),
+                          (.agent_status // "unknown" | urgency),
+                          (.pane_id // "") ], p: . } ]
+            | sort_by(.sort)
+            | . as $sorted_panes
+            | to_entries[]
+            | (.key == ($sorted_panes | length - 1)) as $pane_last
+            | .value.p as $p
+            | (($p.terminal_title_stripped // "") | gsub("^\\s+|\\s+$"; "")) as $title
+            | [ "pane", $p.pane_id, ($p.agent_status // "unknown"),
+                (spine($tab_last) + branch($pane_last)),
+                (if $title == "" then (($p.cwd // "/") | split("/") | last) else $title end),
+                ($p.agent // "")
+              ] | join($sep)
+          )
+      )
+  '
 }
 
 # Width of the label column, in terminal cells. Exported rather than readonly so
@@ -116,7 +157,7 @@ RESET = "\033[0m"
 TAGS = {
     "workspace": ("\033[1;35m", "WS "),
     "tab":       ("\033[36m",   "TAB"),
-    "agent":     ("\033[33m",   "AGT"),
+    "pane":      ("\033[33m",   "PN "),
 }
 ICONS = {
     "working": ("\033[33m", "*"),
@@ -140,17 +181,43 @@ def pad(text, width):
         used += w
     return "".join(out) + " " * max(0, width - used)
 
+DIM = "\033[90m"
+
 for line in sys.stdin:
     parts = line.rstrip("\n").split("\t")
-    if len(parts) < 5:
+    if len(parts) < 6:
         continue
-    kind, ident, status, label, meta = parts[:5]
-    tag_color, tag_text = TAGS.get(kind, ("", "   "))
-    icon_color, icon_text = ICONS.get(status, ("\033[90m", "-"))
+    kind, ident, status, prefix, label, meta = parts[:6]
+
+    # Spacers separate workspaces; they render as an empty row and are never
+    # dispatched, so they need no tag, icon, or padding.
+    if kind == "spacer":
+        sys.stdout.write(f"spacer\t\t\n")
+        continue
+
+    tag_color, tag_text = TAGS.get(kind, ("", "    "))
+    icon_color, icon_text = ICONS.get(status, (DIM, "-"))
+
+    # Workspace rows are the tree roots, so they are bolded to stand out from
+    # their children -- with several workspaces open the boundary between them
+    # is otherwise easy to lose.
+    label_style = "\033[1m" if kind == "workspace" else ""
+
+    # The tree prefix is padded together with the label, otherwise the meta
+    # column would step right on nested rows. Padding is computed on the plain
+    # text and the color is applied after, so the escape codes never count
+    # toward the width.
+    body = pad(prefix + label, WIDTH)
+    if prefix:
+        # Re-split at the prefix boundary to dim the glyphs only.
+        body = f"{DIM}{prefix}{RESET}{label_style}{body[len(prefix):]}{RESET}"
+    else:
+        body = f"{label_style}{body}{RESET}"
+
     sys.stdout.write(
         f"{kind}\t{ident}\t{tag_color}{tag_text}{RESET} "
-        f"{icon_color}{icon_text}{RESET} {pad(label, WIDTH)} "
-        f"\033[90m{meta}{RESET}\n"
+        f"{icon_color}{icon_text}{RESET} {body} "
+        f"{DIM}{meta}{RESET}\n"
     )
 '
 }
@@ -159,32 +226,58 @@ cmd_list() {
   collect_rows | format_rows
 }
 
-# Agent-only view, for the toggle bound below.
+# Agent-only view, for the toggle bound below. Panes without a detected agent
+# carry an empty meta field, which is what distinguishes them here; the tree
+# prefixes are dropped since a flat list has no parents to connect to.
 cmd_list_agents() {
-  collect_rows | awk -F'\t' '$1 == "agent"' | format_rows
+  collect_rows \
+    | awk -F'\t' 'BEGIN { OFS = FS } $1 == "pane" && $6 != "" { $4 = ""; print }' \
+    | format_rows
 }
 
 # Dispatch a chosen row. Exposed as a subcommand so fzf can call back into this
 # same script for reload and preview without duplicating the mapping.
 cmd_focus() {
   local kind="${1:-}" id="${2:-}"
+
+  # Spacers are layout only -- selecting one is a no-op rather than an error.
+  [ "$kind" = spacer ] && return 0
+
   [ -n "$kind" ] && [ -n "$id" ] || die 'focus requires <kind> <id>'
 
   case "$kind" in
     workspace) herdr workspace focus "$id" >/dev/null ;;
     tab)       herdr tab focus "$id" >/dev/null ;;
-    agent)     herdr agent focus "$id" >/dev/null ;;
+    # `herdr pane focus` only moves directionally and takes no target id, so a
+    # pane is reached by focusing its tab first. `agent focus` then lands on the
+    # exact pane, but it errors on panes with no detected agent -- for those the
+    # tab focus is already the closest herdr can get.
+    pane)
+      local tab
+      tab="$(pane_tab_id "$id")"
+      [ -n "$tab" ] && herdr tab focus "$tab" >/dev/null 2>&1
+      herdr agent focus "$id" >/dev/null 2>&1 || true
+      ;;
     *)         die "unknown row kind: $kind" ;;
   esac
+}
+
+# Resolve the tab that owns a pane. Pane ids look like "w1:p2" and carry no tab
+# component, so the mapping has to come back from herdr.
+pane_tab_id() {
+  herdr pane list 2>/dev/null |
+    jq -r --arg id "$1" '.result.panes[] | select(.pane_id == $id) | .tab_id' |
+    head -1
 }
 
 # Preview pane: recent output for agents, structure for the rest.
 cmd_preview() {
   local kind="${1:-}" id="${2:-}"
   case "$kind" in
-    agent) herdr agent read "$id" --lines 40 2>/dev/null || echo '(no output)' ;;
-    tab)   herdr tab get "$id" 2>/dev/null | jq . 2>/dev/null || echo '(no detail)' ;;
-    *)     herdr workspace get "$id" 2>/dev/null | jq . 2>/dev/null || echo '(no detail)' ;;
+    spacer) : ;;
+    pane)   herdr pane read "$id" --lines 40 2>/dev/null || echo '(no output)' ;;
+    tab)    herdr tab get "$id" 2>/dev/null | jq . 2>/dev/null || echo '(no detail)' ;;
+    *)      herdr workspace get "$id" 2>/dev/null | jq . 2>/dev/null || echo '(no detail)' ;;
   esac
 }
 
