@@ -76,5 +76,39 @@
     # bracket pair mirrors the tab binds one modifier up.
     previous_workspace = "cmd+alt+["
     next_workspace = "cmd+alt+]"
+
+    # The remaining actions follow zellij's pane/tab mode letters, so the muscle
+    # memory carries over: what zellij reaches as "Ctrl p" then a letter is
+    # "prefix" then the same letter here.
+    #
+    # zellij pane mode: n=new, x=close, f=fullscreen, r=right split, d=down
+    # split, c=rename. herdr has no generic "new pane", so n is left out and the
+    # two split actions cover it.
+    zoom = "prefix+f"           # zellij fullscreen; herdr default was prefix+z
+    split_vertical = "prefix+r"   # zellij "split right"
+    split_horizontal = "prefix+d" # zellij "split down"
+    close_pane = "prefix+x"
+    rename_pane = "prefix+c"
+
+    # zellij tab mode: n=new, x=close, r=rename. herdr's defaults put new_tab on
+    # prefix+c, which collides with rename_pane above, so tabs move to the
+    # shifted variants and keep the same letters.
+    new_tab = "prefix+shift+n"
+    close_tab = "prefix+shift+x"
+    rename_tab = "prefix+shift+t"
+
+    # prefix+shift+n is new_tab above, which is herdr's default for
+    # new_workspace, so that action is moved here to keep it reachable. herdr
+    # silently disables the losing action on a duplicate, so it needs a key of
+    # its own rather than being left to collide.
+    new_workspace = "prefix+shift+c"
+
+    # split_vertical takes prefix+r, herdr's default for resize_mode, so resize
+    # moves to the zellij letter for its own resize mode.
+    resize_mode = "prefix+n"
+
+    # zellij "Ctrl p" then w opens the tab/session switcher; herdr's equivalent
+    # picker keeps the same letter.
+    workspace_picker = "prefix+w"
   '';
 }
