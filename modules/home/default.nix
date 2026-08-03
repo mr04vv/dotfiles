@@ -50,6 +50,11 @@
     lazygit # TUI for git
 
     # ============================================================================
+    # AI Agent Tools
+    # ============================================================================
+    herdr # Agent multiplexer for the terminal
+
+    # ============================================================================
     # Development Tools - Actions & CI
     # ============================================================================
     act # Run GitHub Actions locally
@@ -105,7 +110,10 @@
     kubectl # Kubernetes CLI
     kubernetes-helm # Kubernetes package manager
     kubeseal # Sealed Secrets
-    minikube # Local Kubernetes
+    # minikube ships `bin/kubectl` as a symlink to itself, which collides with
+    # the standalone kubectl above in home-manager's buildEnv. Lower its
+    # priority so the dedicated kubectl wins and minikube's copy is shadowed.
+    (lib.lowPrio minikube) # Local Kubernetes
     terraform # Infrastructure as Code
     ngrok # Tunneling service
 
