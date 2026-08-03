@@ -1,4 +1,4 @@
-model = "gpt-5.2"
+model = "gpt-5.6-sol"
 sandbox_mode = "danger-full-access"
 model_reasoning_effort = "low"
 
@@ -34,4 +34,13 @@ trust_level = "trusted"
 trust_level = "trusted"
 
 [projects."/Users/takutomori/Works/Atrae/wevox-front"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/develop/workspace/mokumoku/isucon14"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/private/shadow-english"]
+trust_level = "trusted"
+
+[projects."/Users/takutomori/Works/private/train-timer"]
 trust_level = "trusted"
