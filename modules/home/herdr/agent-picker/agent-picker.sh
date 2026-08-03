@@ -172,7 +172,18 @@ cmd_preview() {
   esac
 }
 
+# The "open" action is what a keybinding invokes, and herdr runs actions
+# headless -- no terminal is attached, so fzf would have nowhere to draw and the
+# process would hang forever. Actions therefore only ask herdr to open the pane
+# entrypoint, which does get a real terminal; cmd_ui is what actually renders.
 cmd_open() {
+  exec herdr plugin pane open \
+    --plugin agent-picker \
+    --entrypoint picker \
+    --placement overlay >/dev/null
+}
+
+cmd_ui() {
   require fzf
   require jq
 
@@ -209,7 +220,8 @@ cmd_open() {
 
 main() {
   case "${1:-open}" in
-    open|ui)     cmd_open ;;
+    open)        cmd_open ;;
+    ui)          cmd_ui ;;
     list)        cmd_list ;;
     list-agents) cmd_list_agents ;;
     preview)     shift; cmd_preview "$@" ;;
