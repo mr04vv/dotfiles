@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Fuzzy picker over herdr's workspaces, tabs, and agents.
+# Navigate herdr's workspaces, tabs, and panes as one tree.
 #
 # herdr's built-in navigator lists workspace -> tab -> agent, but never the
-# agent's terminal title. With several Claude panes open that title is the only
-# thing telling them apart, so this picker leads with it.
+# pane's terminal title. With several agent panes open that title is the only
+# thing telling them apart, so this navigator leads with it.
 #
 # Rows are built from `herdr workspace|tab|pane list` and piped through fzf; the
 # selection is dispatched back through the matching herdr focus call.
@@ -19,7 +19,7 @@ readonly SELF
 readonly SEP=$'\t'
 
 die() {
-  printf 'agent-picker: %s\n' "$*" >&2
+  printf 'pane-navigator: %s\n' "$*" >&2
   exit 1
 }
 
@@ -269,7 +269,7 @@ api_call() {
   [ -S "$socket" ] || die "herdr socket not found at $socket"
   require nc
 
-  printf '{"id":"agent-picker","method":"%s","params":%s}\n' "$method" "$params" |
+  printf '{"id":"pane-navigator","method":"%s","params":%s}\n' "$method" "$params" |
     nc -U "$socket" 2>/dev/null |
     head -1
 }
@@ -291,8 +291,8 @@ cmd_preview() {
 # entrypoint, which does get a real terminal; cmd_ui is what actually renders.
 cmd_open() {
   exec herdr plugin pane open \
-    --plugin agent-picker \
-    --entrypoint picker \
+    --plugin pane-navigator \
+    --entrypoint navigator \
     --placement overlay >/dev/null
 }
 
@@ -303,7 +303,7 @@ cmd_ui() {
   local self selection kind id
   self="$(printf '%q' "$SELF")"
 
-  # Modal, vim style. The picker starts in normal mode: --disabled turns the
+  # Modal, vim style. The navigator starts in normal mode: --disabled turns the
   # query off so j/k/g/G are free to move the cursor, and "/" re-enables search.
   # Leaving search with esc drops back to normal mode instead of quitting, so
   # esc only exits from normal mode.
@@ -363,7 +363,7 @@ cmd_ui() {
   # overlay's zoom on its way out.
   cmd_focus "$kind" "$id"
 
-  # HERDR_PANE_ID is set by herdr for the pane a plugin runs in. When the picker
+  # HERDR_PANE_ID is set by herdr for the pane a plugin runs in. When the navigator
   # is run outside herdr there is nothing to close.
   if [ -n "${HERDR_PANE_ID:-}" ]; then
     herdr pane close "$HERDR_PANE_ID" >/dev/null 2>&1 || true
