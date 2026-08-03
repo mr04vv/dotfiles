@@ -119,5 +119,20 @@
     # local shortcuts and are independent from the focus_pane_* binds above.
     navigate_workspace_up = "k"
     navigate_workspace_down = "j"
+
+    # Sidebar agent rows. The default rows show only where an agent lives
+    # (workspace/tab) and which agent it is, which does not say what any of them
+    # is working on. Claude Code sets its terminal title to a summary of the
+    # current conversation, so that line is added for claude specifically -- with
+    # several Claude panes open it is the only thing distinguishing them.
+    #
+    # This is the conversation title, not the prompt text; herdr exposes no raw
+    # prompt to the sidebar.
+    [ui.sidebar.agents.rows_by_agent]
+    claude = [
+      ["state_icon", "workspace", "tab"],
+      [{ token = "terminal_title_stripped", fg = "#f0e68c" }],
+      ["agent"],
+    ]
   '';
 }
