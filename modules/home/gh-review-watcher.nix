@@ -52,5 +52,33 @@ in
     # ブラウザでPRを開く
     [on_select]
     command = "open {url}"
+
+    # --- actions: `a` で開くメニューから選択実行（選択中PRに対して） ---
+    # TUIで `a` → j/k で選び Enter で実行、Esc で閉じる。
+    # 1件も定義がないと `a` は無反応になる（フッターのヒントは常に出る）。
+
+    [[actions]]
+    name = "Rebase (update branch)"
+    command = "gh pr update-branch {number} -R {repo} --rebase"
+
+    [[actions]]
+    name = "Approve"
+    command = "gh pr review {number} -R {repo} --approve --body 'LGTM 👍 (manual)'"
+
+    [[actions]]
+    name = "Request changes"
+    command = "gh pr review {number} -R {repo} --request-changes --body 'CI/変更点を確認してください'"
+
+    [[actions]]
+    name = "Open CI checks (web)"
+    command = "gh pr checks {number} -R {repo} --web"
+
+    [[actions]]
+    name = "Re-review with Claude (new tab)"
+    command = "zellij action new-tab --name 'Review: {repo}#{number}' --close-on-exit -- ${scriptsDir}/review-pr.sh '{url}' '{number}' '{repo}'"
+
+    [[actions]]
+    name = "Copy URL"
+    command = "printf %s {url} | pbcopy"
   '';
 }
