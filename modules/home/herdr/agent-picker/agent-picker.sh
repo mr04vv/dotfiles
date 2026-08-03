@@ -190,6 +190,17 @@ cmd_ui() {
   local self selection kind id
   self="$(printf '%q' "$SELF")"
 
+  # Modal, vim style. The picker starts in normal mode: --disabled turns the
+  # query off so j/k/g/G are free to move the cursor, and "/" re-enables search.
+  # Leaving search with esc drops back to normal mode instead of quitting, so
+  # esc only exits from normal mode.
+  #
+  # Every single-letter binding has to be released while searching or it would
+  # be swallowed instead of reaching the query; leaving search rebinds them all.
+  # esc is the inverse -- live only while searching -- so normal mode exits on q.
+  local normal_binds='unbind(j,k,g,G,/,q,a,s,r,p)'
+  local vim_binds='rebind(j,k,g,G,/,q,a,s,r,p)'
+
   # --with-nth=3.. hides the dispatch prefix while leaving it in the output.
   # ctrl-a swaps the source to agents only and ctrl-s swaps it back, which is
   # cheaper than filtering on the tag text and keeps the counter honest.
@@ -198,17 +209,30 @@ cmd_ui() {
       --ansi \
       --delimiter="$SEP" \
       --with-nth='3..' \
-      --prompt='herdr > ' \
-      --header='[enter] focus  [ctrl-a] agents only  [ctrl-s] show all  [ctrl-r] reload  [ctrl-/] preview' \
+      --disabled \
+      --prompt='herdr | ' \
+      --header='[j/k] move  [/] search  [enter] focus  [a] agents  [s] all  [r] reload  [p] preview  [q] quit' \
       --info=inline \
       --layout=reverse \
       --border=rounded \
       --height=100% \
       --preview="$self preview {1} {2}" \
       --preview-window='right,50%,border-left,wrap,hidden' \
+      --bind="start:unbind(esc)" \
+      --bind="j:down" \
+      --bind="k:up" \
+      --bind="g:first" \
+      --bind="G:last" \
+      --bind="q:abort" \
+      --bind="p:toggle-preview" \
+      --bind="/:enable-search+change-prompt(search > )+$normal_binds+rebind(esc)" \
+      --bind="esc:disable-search+clear-query+change-prompt(herdr | )+$vim_binds+unbind(esc)" \
       --bind="ctrl-/:toggle-preview" \
-      --bind="ctrl-a:change-prompt(agents > )+reload($self list-agents)" \
-      --bind="ctrl-s:change-prompt(herdr > )+reload($self list)" \
+      --bind="a:change-prompt(agents | )+reload($self list-agents)" \
+      --bind="s:change-prompt(herdr | )+reload($self list)" \
+      --bind="r:reload($self list)" \
+      --bind="ctrl-a:change-prompt(agents | )+reload($self list-agents)" \
+      --bind="ctrl-s:change-prompt(herdr | )+reload($self list)" \
       --bind="ctrl-r:reload($self list)"
   )" || exit 0
 
