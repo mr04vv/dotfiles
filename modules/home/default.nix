@@ -7,6 +7,7 @@
     ./neovim.nix
     ./tmux.nix
     ./zellij.nix
+    ./herdr.nix
     ./ghostty.nix
     ./hammerspoon.nix
     ./claude.nix
