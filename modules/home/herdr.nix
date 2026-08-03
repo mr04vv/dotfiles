@@ -77,6 +77,15 @@
     previous_workspace = "cmd+alt+["
     next_workspace = "cmd+alt+]"
 
+    # Agents step through the sidebar list in order -- herdr has no agent
+    # equivalent of navigate_workspace_up/down, so cycling is the closest thing
+    # to picking one off the list. Same bracket pair, third modifier.
+    #
+    # If the terminal sends the shifted glyph rather than shift+bracket, herdr
+    # also accepts "alt+{" / "alt+}" for these.
+    previous_agent = "alt+shift+["
+    next_agent = "alt+shift+]"
+
     # The remaining actions follow zellij's pane/tab mode letters, so the muscle
     # memory carries over: what zellij reaches as "Ctrl p" then a letter is
     # "prefix" then the same letter here.
