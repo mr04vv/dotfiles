@@ -57,6 +57,12 @@
       mkdir -p ${config.home.homeDirectory}/.codex/skills/$skill
       cp -r ${./claude/skills}/$skill/. ${config.home.homeDirectory}/.codex/skills/$skill/
     done
+    # herdr ships its own agent skill. It builds on every supported platform,
+    # so unlike terminal-browser below it needs no per-system guard.
+    for base in .claude .codex; do
+      install -D -m 644 ${pkgs.herdr}/share/herdr/skills/herdr/SKILL.md \
+        ${config.home.homeDirectory}/$base/skills/herdr/SKILL.md
+    done
   ''
   # terminal-browser ships its own agent skill. Upstream only builds for Apple
   # Silicon, so referencing the package on any other system would throw.
