@@ -1,7 +1,7 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 {
-  home.activation.claudeConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+  home.activation.claudeConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] (''
     # Single files
     install -D -m 644 ${./claude/CLAUDE.md} ${config.home.homeDirectory}/.claude/CLAUDE.md
     install -D -m 644 ${./claude/settings.json} ${config.home.homeDirectory}/.claude/settings.json
@@ -49,5 +49,21 @@
       install -m 755 ${./claude/skills/_shared/build_diff_page.py} \
         ${config.home.homeDirectory}/.codex/skills/$skill/scripts/build_diff_page.py
     done
-  '';
+    # skills vendored from third-party repos (see claude/VENDORED-SKILLS.md
+    # for origins and update procedure). Plain copies -- no shared-script
+    # fan-out needed.
+    for skill in paper-details html documenting-with-sources writing-quotation explain \
+                 grilling grill-me navigating quizzing tutoring; do
+      mkdir -p ${config.home.homeDirectory}/.codex/skills/$skill
+      cp -r ${./claude/skills}/$skill/. ${config.home.homeDirectory}/.codex/skills/$skill/
+    done
+  ''
+  # terminal-browser ships its own agent skill. Upstream only builds for Apple
+  # Silicon, so referencing the package on any other system would throw.
+  + lib.optionalString (pkgs.stdenv.hostPlatform.system == "aarch64-darwin") ''
+    for base in .claude .codex; do
+      install -D -m 644 ${pkgs.terminal-browser}/share/terminal-browser/SKILL.md \
+        ${config.home.homeDirectory}/$base/skills/terminal-browser/SKILL.md
+    done
+  '');
 }
