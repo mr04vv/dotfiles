@@ -7,6 +7,39 @@
   xdg.configFile."herdr/config.toml".text = ''
     # herdr configuration
 
+    [theme]
+    # catppuccin is herdr's default base; every token that matters for contrast
+    # is overridden below, so the base only supplies the few tokens herdr does
+    # not expose in [theme.custom].
+    name = "catppuccin"
+
+    # The palette is matched to Ghostty's "Desert" theme (set in ghostty.nix) so
+    # herdr's chrome sits on the same sand/khaki scale as the panes it wraps.
+    #
+    # The reason for overriding at all: catppuccin's stock surface0/surface1 sit
+    # only a few shades off panel_bg, which made the selected sidebar row
+    # effectively invisible. surface1 is the selected-row background, so it is
+    # pushed to a clearly lighter khaki that reads at a glance.
+    [theme.custom]
+    panel_bg = "#2b2b2b"    # sidebar background, one step darker than Desert's #333333
+    surface0 = "#4a4336"    # unselected hover / separators
+    surface1 = "#7a6a3f"    # selected row background -- the main contrast fix
+    surface_dim = "#3a3a3a"
+    overlay0 = "#8a8a8a"    # borders
+    overlay1 = "#b0a48c"
+    text = "#ffffff"        # Desert foreground
+    subtext0 = "#c9bfa8"
+
+    # Accent and the named colors track the Desert palette entries.
+    accent = "#f0e68c"      # Desert palette 3 (khaki)
+    yellow = "#f0e68c"
+    green = "#98fb98"       # Desert palette 2
+    red = "#ff5555"         # Desert palette 9
+    blue = "#87ceff"        # Desert palette 12
+    teal = "#ffd700"        # Desert palette 14
+    peach = "#cd853f"       # Desert palette 4
+    mauve = "#ffdead"       # Desert palette 5
+
     [keys]
     # herdr defaults to tmux-style prefix bindings (ctrl+b). The bindings below
     # are direct shortcuts instead -- they need no prefix -- so pane and tab
@@ -26,13 +59,22 @@
     # prefix off ctrl+b.
     prefix = "ctrl+p"
 
-    # Pane focus -- mirrors zellij's "Alt [" / "Alt ]".
-    focus_pane_left = "alt+["
-    focus_pane_right = "alt+]"
+    # Pane focus -- option+arrow, matching zellij's "Alt <arrow>" binds. Since
+    # herdr takes a single key per action, the arrows replace zellij's
+    # "Alt [" / "Alt ]" pair rather than sitting alongside it.
+    focus_pane_left = "alt+left"
+    focus_pane_right = "alt+right"
+    focus_pane_up = "alt+up"
+    focus_pane_down = "alt+down"
 
     # Tab switching -- zellij binds Super/Ctrl/Alt-Shift variants; ctrl+alt is
     # the one kept here.
     previous_tab = "ctrl+alt+["
     next_tab = "ctrl+alt+]"
+
+    # Workspace switching on cmd+option+[]. These are unset by default; the
+    # bracket pair mirrors the tab binds one modifier up.
+    previous_workspace = "cmd+alt+["
+    next_workspace = "cmd+alt+]"
   '';
 }
