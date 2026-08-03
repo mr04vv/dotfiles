@@ -5,12 +5,12 @@
 # agent's terminal title. With several Claude panes open that title is the only
 # thing telling them apart, so this picker leads with it.
 #
-# Rows are built from `herdr workspace|tab|agent list` and piped through fzf;
-# the selection is dispatched back through the matching `herdr ... focus`.
+# Rows are built from `herdr workspace|tab|pane list` and piped through fzf; the
+# selection is dispatched back through the matching herdr focus call.
 set -euo pipefail
 
-# Absolute, because fzf's reload/preview bindings and the detached focus child
-# all re-invoke this script from a working directory we do not control.
+# Absolute, because fzf's reload and preview bindings re-invoke this script from
+# a working directory we do not control.
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 readonly SELF
 
@@ -353,46 +353,24 @@ cmd_ui() {
 
   IFS="$SEP" read -r kind id _ <<<"$selection"
 
-  # An overlay pane zooms the tab it covers, and that zoom is only released once
-  # the overlay is gone -- focusing while it is still up leaves the destination
-  # tab zoomed. So the pane has to close first, but closing it also tears down
-  # this very process, which would kill the focus along with it.
+  # Focus first, then close this pane.
   #
-  # The focus is therefore handed to a detached child that outlives the pane: it
-  # waits for the zoom to clear, then dispatches. HERDR_PANE_ID is set by herdr
-  # for the pane a plugin runs in; without it nothing needs closing and the
-  # focus can happen inline.
-  if [ -n "${HERDR_PANE_ID:-}" ]; then
-    # nohup rather than setsid, which macOS does not ship.
-    nohup "$SELF" focus-deferred "$kind" "$id" >/dev/null 2>&1 &
-    disown 2>/dev/null || true
-    herdr pane close "$HERDR_PANE_ID" >/dev/null 2>&1 || true
-    exit 0
-  fi
-
+  # The order matters and the obvious one is wrong: an overlay pane zooms the
+  # tab it covers, so closing first would look right -- but herdr kills the
+  # pane's whole process group, taking any backgrounded follow-up with it
+  # (nohup does not escape that, and macOS has no setsid). Focusing first keeps
+  # the dispatch inside this process, and the close that follows releases the
+  # overlay's zoom on its way out.
   cmd_focus "$kind" "$id"
+
+  # HERDR_PANE_ID is set by herdr for the pane a plugin runs in. When the picker
+  # is run outside herdr there is nothing to close.
+  if [ -n "${HERDR_PANE_ID:-}" ]; then
+    herdr pane close "$HERDR_PANE_ID" >/dev/null 2>&1 || true
+  fi
 }
 
-# Wait for the picker's own pane to disappear, then focus. Only ever run as a
-# detached child of cmd_ui, which is closing that pane as this starts.
-cmd_focus_deferred() {
-  wait_for_unzoom
-  cmd_focus "$@"
-}
 
-# Poll until no tab reports itself zoomed, so a focus is not applied while the
-# overlay's zoom is still in effect. Bounded so a stuck overlay cannot hang the
-# picker; focusing into a zoomed tab is a cosmetic problem, not a fatal one.
-wait_for_unzoom() {
-  local i
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    case "$(api_call pane.layout '{}')" in
-      *'"zoomed":true'*) ;;
-      *) return 0 ;;
-    esac
-    sleep 0.05
-  done
-}
 
 main() {
   case "${1:-open}" in
@@ -401,8 +379,7 @@ main() {
     list)        cmd_list ;;
     list-agents) cmd_list_agents ;;
     preview)     shift; cmd_preview "$@" ;;
-    focus)          shift; cmd_focus "$@" ;;
-    focus-deferred) shift; cmd_focus_deferred "$@" ;;
+    focus)       shift; cmd_focus "$@" ;;
     *)           die "unknown subcommand: ${1:-}" ;;
   esac
 }
