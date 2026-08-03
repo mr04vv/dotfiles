@@ -1,8 +1,8 @@
-id = "agent-picker"
-name = "Agent Picker"
+id = "pane-navigator"
+name = "Pane Navigator"
 version = "0.1.0"
 min_herdr_version = "0.7.3"
-description = "Fuzzy picker over workspaces, tabs, and agents that leads with each agent's terminal title."
+description = "Navigate workspaces, tabs, and panes as one tree, led by each pane's title."
 platforms = ["linux", "macos"]
 
 # No [[build]] section: the plugin is a shell script, so there is nothing to
@@ -10,12 +10,12 @@ platforms = ["linux", "macos"]
 
 [[actions]]
 id = "open"
-title = "Agent Picker: open"
+title = "Pane Navigator: open"
 contexts = ["workspace", "global"]
-command = ["./agent-picker.sh", "open"]
+command = ["./pane-navigator.sh", "open"]
 
 [[panes]]
-id = "picker"
-title = "Agent Picker"
+id = "navigator"
+title = "Pane Navigator"
 placement = "overlay"
-command = ["./agent-picker.sh", "ui"]
+command = ["./pane-navigator.sh", "ui"]
