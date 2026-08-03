@@ -66,16 +66,32 @@ collect_rows() {
     # terminal_title_stripped is the whole point of this picker: it is the only
     # field describing what an agent is actually doing. Agents that have not set
     # a title fall back to their cwd basename.
+    #
+    # Rows are ordered by how much they want attention -- blocked agents are
+    # stuck on a prompt, done ones just finished a turn, working ones need
+    # nothing. The focused agent sorts last: it is the one pane you are already
+    # looking at, so enter should jump somewhere else.
     printf '%s' "$agent_json" | jq -r --arg sep "$SEP" --argjson ws "$ws_labels" '
-      .result.agents[]
-      | ((.terminal_title_stripped // "") | gsub("^\\s+|\\s+$"; "")) as $title
-      | (if $title == "" then ((.cwd // "/") | split("/") | last) else $title end) as $label
-      | [ "agent",
-          .pane_id,
-          (.agent_status // "unknown"),
-          (($ws[.workspace_id] // .workspace_id) + " / " + $label),
-          .agent
-        ] | join($sep)
+      def urgency:
+        { "blocked": 0, "done": 1, "working": 2, "idle": 3 }[.] // 4;
+
+      [ .result.agents[]
+        | ((.terminal_title_stripped // "") | gsub("^\\s+|\\s+$"; "")) as $title
+        | (.agent_status // "unknown") as $status
+        | { pane_id,
+            status: $status,
+            label: (($ws[.workspace_id] // .workspace_id) + " / "
+                     + (if $title == "" then ((.cwd // "/") | split("/") | last)
+                        else $title end)),
+            agent,
+            sort_key: [ (if .focused then 1 else 0 end),
+                        ($status | urgency),
+                        (.workspace_id // ""),
+                        (.pane_id // "") ]
+          }
+      ]
+      | sort_by(.sort_key)[]
+      | [ "agent", .pane_id, .status, .label, .agent ] | join($sep)
     '
   fi
 }
