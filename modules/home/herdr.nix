@@ -7,7 +7,7 @@ let
     source = "mr04vv/herdr-pane-navigator";
     # Pinned so a rebuild cannot silently pull a different version. Bump this
     # after tagging a release upstream.
-    ref = "v0.1.0";
+    ref = "v0.1.1";
   };
 in
 {
@@ -163,12 +163,20 @@ in
 
     # Sidebar agent rows. The default rows show only where an agent lives
     # (workspace/tab) and which agent it is, which does not say what any of them
-    # is working on. Claude Code and Codex set their terminal title to a summary
-    # of the current conversation, so that line is added for both agents -- with
-    # several agent panes open it is the only thing distinguishing them.
+    # is working on, so a conversation-summary line is added for both agents --
+    # with several agent panes open it is the only thing distinguishing them.
     #
     # This is the conversation title, not the prompt text; herdr exposes no raw
     # prompt to the sidebar.
+    #
+    # Claude Code puts a summary in its terminal title, so terminal_title_stripped
+    # is enough there. Codex does not name threads on its own: with
+    # terminal_title = ["thread-title"] an unnamed thread falls back to the raw
+    # session UUID, which is what the sidebar was showing. The $codex_title token
+    # is filled in by the Stop hook in ~/.codex/codex-title.sh, which summarizes
+    # the conversation and reports it with `herdr pane report-metadata --token`.
+    # A $-token renders empty until something reports it, so the row is harmless
+    # when the hook is absent.
     [ui.sidebar.agents.rows_by_agent]
     claude = [
       ["state_icon", "workspace", "tab"],
@@ -177,7 +185,7 @@ in
     ]
     codex = [
       ["state_icon", "workspace", "tab"],
-      [{ token = "terminal_title_stripped", fg = "#f0e68c" }],
+      [{ token = "$codex_title", fg = "#f0e68c" }],
       ["agent"],
     ]
   '';

@@ -227,6 +227,16 @@
         cd "$(ghq root)/$(ghq list | peco)"
       }
 
+      # herdr のペイン内で起動したときはワークスペース名を watcher に合わせる。
+      # zellij では layout がタブ名を付けるが、herdr にはレイアウト定義が無い
+      # ので起動側で寄せる (herdr 外では何もしないで素通し)。
+      function gh-review-watcher() {
+        if [ "''${HERDR_ENV:-}" = "1" ] && [ -n "''${HERDR_WORKSPACE_ID:-}" ]; then
+          herdr workspace rename "$HERDR_WORKSPACE_ID" gh-review-watcher >/dev/null 2>&1
+        fi
+        command gh-review-watcher "$@"
+      }
+
       # ============================================================================
       # Zoxide (smarter cd)
       # ============================================================================

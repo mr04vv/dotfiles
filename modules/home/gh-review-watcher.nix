@@ -25,12 +25,12 @@ in
       --message {title} \
       --sound default"""
 
-    # yoloラベルがなければZellijの新タブでClaude Codeレビューを実行
-    # 分析完了後にタブにフォーカスが移るため、起動直後はgo-to-previous-tabで元タブに戻す
+    # yoloラベルがなければ新タブでClaude Codeレビューを実行。
+    # タブの開き方は open-review-tab.sh が herdr / zellij を実行時判定するので、
+    # watcher をどちらのマルチプレクサ内で動かしても同じ config で機能する。
     [[on_new_pr]]
     name = "review-tab"
-    command = """echo '{labels}' | grep -q yolo || (zellij action new-tab --name 'Review: {repo}#{number}' --close-on-exit -- \
-      ${scriptsDir}/review-pr.sh '{url}' '{number}' '{repo}' && zellij action go-to-previous-tab)"""
+    command = """echo '{labels}' | grep -q yolo || ${scriptsDir}/open-review-tab.sh '{url}' '{number}' '{repo}'"""
 
     # --- on_poll: 毎ポーリング ---
 
@@ -75,7 +75,7 @@ in
 
     [[actions]]
     name = "Re-review with Claude (new tab)"
-    command = "zellij action new-tab --name 'Review: {repo}#{number}' --close-on-exit -- ${scriptsDir}/review-pr.sh '{url}' '{number}' '{repo}'"
+    command = "${scriptsDir}/open-review-tab.sh '{url}' '{number}' '{repo}'"
 
     [[actions]]
     name = "Copy URL"

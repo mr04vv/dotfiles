@@ -47,6 +47,28 @@
     chmod -R u+w ${config.home.homeDirectory}/.claude/commands 2>/dev/null || true
     cp -r ${./claude/commands}/. ${config.home.homeDirectory}/.claude/commands/
 
+    # ponytail (vendored plugin, see claude/ponytail/UPSTREAM.md).
+    # Upstream ships as a Claude Code plugin, but this repo deploys it by hand so
+    # a rebuild owns it declaratively. Three parts: the six SKILL.md skills and the
+    # six commands go into the shared skills/commands trees; the Node hooks that
+    # inject the ruleset every session (the "always on" effect, the plugin's core)
+    # live under ~/.claude/ponytail/hooks and are wired up in settings.json.
+    # Commands are converted from upstream .toml to .md ({{args}} -> $ARGUMENTS)
+    # because ~/.claude/commands only reliably supports the .md form.
+    for skill in ponytail ponytail-review ponytail-audit ponytail-debt ponytail-gain ponytail-help; do
+      mkdir -p ${config.home.homeDirectory}/.claude/skills/$skill
+      chmod -R u+w ${config.home.homeDirectory}/.claude/skills/$skill 2>/dev/null || true
+      cp -r ${./claude/ponytail/skills}/$skill/. ${config.home.homeDirectory}/.claude/skills/$skill/
+    done
+    cp ${./claude/ponytail/commands}/*.md ${config.home.homeDirectory}/.claude/commands/
+    # Hooks read the SKILL body via ../skills/ponytail/SKILL.md relative to the
+    # hooks dir, so keep skills/ alongside hooks/ under the ponytail root too.
+    mkdir -p ${config.home.homeDirectory}/.claude/ponytail
+    chmod -R u+w ${config.home.homeDirectory}/.claude/ponytail 2>/dev/null || true
+    cp -r ${./claude/ponytail/hooks} ${config.home.homeDirectory}/.claude/ponytail/hooks
+    cp -r ${./claude/ponytail/skills} ${config.home.homeDirectory}/.claude/ponytail/skills
+    chmod -R u+w ${config.home.homeDirectory}/.claude/ponytail
+
     # codex
     #
     # codex writes runtime state back into config.toml -- notably [hooks.state],
@@ -71,6 +93,11 @@
     # directly and this activation overwrites it. hooks.json carries an @HOME@
     # placeholder because codex takes a literal command string.
     install -D -m 755 ${./claude/codex/hooks/herdr-agent-state.sh} ${config.home.homeDirectory}/.codex/herdr-agent-state.sh
+    # Stop hook: summarizes the conversation once per session and reports it as
+    # the $codex_title sidebar token (see ui.sidebar.agents.rows_by_agent in
+    # herdr.nix). Vendored here because this activation owns hooks.json -- a
+    # hook added only on the live file is wiped by the next rebuild.
+    install -D -m 755 ${./claude/codex/hooks/codex-title.sh} ${config.home.homeDirectory}/.codex/codex-title.sh
     install -D -m 644 ${./claude/codex/hooks.json} ${config.home.homeDirectory}/.codex/hooks.json
     ${pkgs.gnused}/bin/sed -i 's|@HOME@|${config.home.homeDirectory}|g' \
       ${config.home.homeDirectory}/.codex/hooks.json
