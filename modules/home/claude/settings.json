@@ -57,6 +57,40 @@
           }
         ],
         "matcher": "*"
+      },
+      {
+        "hooks": [
+          {
+            "command": "node '@HOME@/.claude/ponytail/hooks/ponytail-activate.js'",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume|clear|compact"
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "command": "node '@HOME@/.claude/ponytail/hooks/ponytail-subagent.js'",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "node '@HOME@/.claude/ponytail/hooks/ponytail-mode-tracker.js'",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
       }
     ],
     "Stop": [

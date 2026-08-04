@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "sh '@HOME@/.codex/codex-title.sh'",
+            "timeout": 60,
+            "type": "command"
+          }
+        ]
+      }
     ]
   }
 }
