@@ -7,7 +7,7 @@ let
     source = "mr04vv/herdr-pane-navigator";
     # Pinned so a rebuild cannot silently pull a different version. Bump this
     # after tagging a release upstream.
-    ref = "v0.1.1";
+    ref = "v0.1.2";
   };
 in
 {
