@@ -9,6 +9,17 @@ let
     # after tagging a release upstream.
     ref = "v0.1.4";
   };
+
+  # Third-party plugin: renders a real Chromium view inside a Herdr pane and
+  # drives it over CDP. https://github.com/ogulcancelik/herdr-browser
+  # Requires the [experimental] kitty_graphics flag below, plus Bun and a
+  # Chrome/Chromium binary at runtime (not managed here).
+  herdrBrowser = {
+    source = "ogulcancelik/herdr-browser";
+    # Upstream publishes no release tags yet, so this pins the commit that was
+    # vendored. Bump after verifying a newer HEAD upstream.
+    ref = "be6888b71cf4eb5939ee79a746bd1a1c22ade046";
+  };
 in
 {
   # herdr owns its plugin tree (it fetches, unpacks, and records plugins under
@@ -19,6 +30,16 @@ in
     if [ -x "${pkgs.herdr}/bin/herdr" ]; then
       ${pkgs.herdr}/bin/herdr plugin install ${paneNavigator.source} \
         --ref ${paneNavigator.ref} --yes >/dev/null 2>&1 || true
+    fi
+  '';
+
+  # Same install-on-activation pattern as pane-navigator above: herdr owns the
+  # plugin tree, install is idempotent for a present ref, and the guard keeps it
+  # quiet when herdr is absent.
+  home.activation.herdrBrowser = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    if [ -x "${pkgs.herdr}/bin/herdr" ]; then
+      ${pkgs.herdr}/bin/herdr plugin install ${herdrBrowser.source} \
+        --ref ${herdrBrowser.ref} --yes >/dev/null 2>&1 || true
     fi
   '';
 
@@ -188,5 +209,11 @@ in
       [{ token = "$codex_title", fg = "#f0e68c" }],
       ["agent"],
     ]
+
+    # Kitty graphics protocol, required by the herdr-browser plugin to render
+    # its Chromium view in a pane. Ghostty (see ghostty.nix) supports it. Kept
+    # last so it stays its own table -- no keys follow that could leak into it.
+    [experimental]
+    kitty_graphics = true
   '';
 }
