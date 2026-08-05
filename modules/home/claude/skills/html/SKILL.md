@@ -23,27 +23,6 @@ description: 概念・仕組み・調査内容を、HTML による視覚的な�
 - ファイル名は `{yyyymmdd}-{内容を表すケバブケース}.html` とする。既存ファイルの更新では名前を変えない
 - 個別の文書管理システム、メタデータ、Viewer、公開先に関する規則は、このスキルを参照する上位スキルの指示に従う
 
-## 表示（herdr-browser）
-
-作成・更新した HTML は、herdr のペインでプレビュー表示する。herdr の
-`herdr-browser` plugin（Chromium を CDP で描画する）を使い、生成物を右分割で開く。
-
-- `HERDR_ENV=1` のとき（herdr セッション内）のみ実行する。未設定なら表示手順はスキップし、保存先パスをユーザーに伝えるだけにとどめる。
-- 保存した HTML の**絶対パス**を `file://` URL にして開く。相対パスやパス内スペースに注意し、絶対パスを使う。
-- 既定は右分割・フォーカス付きで開く。同じファイルを更新した場合も同手順で開き直してよい。
-
-```bash
-herdr plugin pane open \
-  --plugin official.browser \
-  --entrypoint browser \
-  --placement split \
-  --direction right \
-  --env HERDR_BROWSER_INITIAL_URL="file:///absolute/path/to/output.html" \
-  --focus
-```
-
-plugin が未インストール・未対応端末などでコマンドが失敗した場合は、エラーを握り潰さずユーザーに報告し、保存先パスの提示にフォールバックする。
-
 ## デザインシステム
 
 作成前に `design-system/component-samples.html` を確認する。コンポーネント集は `design-system/document.css`、数式コピー機能は `design-system/math-copy.js` を正とする。
