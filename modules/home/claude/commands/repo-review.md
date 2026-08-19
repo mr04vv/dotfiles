@@ -1,4 +1,4 @@
-# Code Review Command
+# Repo Review Command
 
 Perform a comprehensive code review for any repository, analyzing code quality, best practices, and potential improvements.
 
@@ -55,7 +55,7 @@ Follow these steps to conduct a thorough code review:
 
 9. **Output to Markdown File**
    - After completing the review, save the results to a markdown file
-   - Use the current date and time in the filename (e.g., `code-review-YYYY-MM-DD-HHMMSS.md`)
+   - Use the current date and time in the filename (e.g., `repo-review-YYYY-MM-DD-HHMMSS.md`)
    - Structure the output with clear sections and proper markdown formatting
    - Include a table of contents for easy navigation
    - **Write all content in Japanese** - provide the review results in Japanese language
