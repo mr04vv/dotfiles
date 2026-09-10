@@ -130,6 +130,8 @@
     # ============================================================================
     inetutils # telnet, etc.
     websocat # WebSocket client
+    livekit # LiveKit WebRTC server
+    livekit-cli # LiveKit CLI
 
     # ============================================================================
     # Embedded Development - AVR

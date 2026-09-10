@@ -1,5 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "advisorModel": "fable",
   "alwaysThinkingEnabled": false,
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
@@ -114,7 +115,6 @@
       }
     ]
   },
-
   "permissions": {
     "allow": [
       "Bash(rg:*)",
@@ -141,7 +141,9 @@
       "Read(**/*.md)",
       "Read(**/src/**/*.go)",
       "Read(**/src/**/*.rb)",
-      "Read(~/Works/**/*)","Edit(~/Works/**/*)","WebFetch",
+      "Read(~/Works/**/*)",
+      "Edit(~/Works/**/*)",
+      "WebFetch",
       "Bash(ni)",
       "Edit(**/.claude/settings.json)",
       "Edit(**/.claude/CLAUDE.md)",
@@ -160,7 +162,7 @@
       "Bash(npm i:*)",
       "Bash(npm install:*)"
     ],
-    "defaultMode": "default",
+    "defaultMode": "auto",
     "deny": [
       "Bash(git push -f *)",
       "Bash(git push --force *)",
@@ -168,7 +170,7 @@
       "Bash(rm -rf:*)",
       "Bash(git config:*)",
       "Bash(git reset:*)",
-"Bash(chmod 777:*)",
+      "Bash(chmod 777:*)",
       "Bash(gh repo delete:*)",
       "Read(.env.*)",
       "Read(id_rsa)",
@@ -186,5 +188,6 @@
     "padding": 0,
     "type": "command"
   },
-  "theme": "custom:midnight"
+  "theme": "custom:midnight",
+  "viewMode": "focus"
 }
