@@ -54,6 +54,7 @@
     # AI Agent Tools
     # ============================================================================
     herdr # Agent multiplexer for the terminal
+    devin # Devin CLI (Cognition)
 
     # ============================================================================
     # Development Tools - Actions & CI

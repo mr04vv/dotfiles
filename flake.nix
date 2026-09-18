@@ -88,6 +88,7 @@
               (import ./overlays/gh.nix)
               (import ./overlays/terminal-browser.nix)
               (import ./overlays/pipx.nix)
+              (import ./overlays/devin.nix)
             ];
           }
 
@@ -151,6 +152,7 @@
               (import ./overlays/gh.nix)
               (import ./overlays/terminal-browser.nix)
               (import ./overlays/pipx.nix)
+              (import ./overlays/devin.nix)
             ];
           }
 
@@ -178,6 +180,7 @@
               (import ./overlays/gh.nix)
               (import ./overlays/terminal-browser.nix)
               (import ./overlays/pipx.nix)
+              (import ./overlays/devin.nix)
             ];
           };
         in
