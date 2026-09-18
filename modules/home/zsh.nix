@@ -181,16 +181,6 @@
       prompt_pure_state[username]='🐾'
 
       # ============================================================================
-      # Google Cloud SDK
-      # ============================================================================
-      if [ -f "$HOME/Downloads/google-cloud-sdk/path.zsh.inc" ]; then
-        . "$HOME/Downloads/google-cloud-sdk/path.zsh.inc"
-      fi
-      if [ -f "$HOME/Downloads/google-cloud-sdk/completion.zsh.inc" ]; then
-        . "$HOME/Downloads/google-cloud-sdk/completion.zsh.inc"
-      fi
-
-      # ============================================================================
       # Amazon Q
       # ============================================================================
       if [[ -f "$HOME/Library/Application Support/amazon-q/shell/zshrc.pre.zsh" ]]; then

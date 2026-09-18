@@ -108,6 +108,7 @@
     # Cloud & Infrastructure
     # ============================================================================
     awscli2 # AWS CLI
+    google-cloud-sdk # gcloud, bq, gsutil
     kubectl # Kubernetes CLI
     kubernetes-helm # Kubernetes package manager
     kubeseal # Sealed Secrets
