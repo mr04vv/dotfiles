@@ -27,9 +27,6 @@
       # ghq root
       ghq.root = "~/dev";
 
-      # URL rewrites for GitHub
-      url."git@github.com:".insteadOf = "https://github.com/";
-
       # Git aliases
       alias = {
         st = "status";
