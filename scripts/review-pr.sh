@@ -25,12 +25,37 @@ PR_CREATED=$(echo "$PR_META_JSON" | jq -r '.createdAt // "?"' | cut -d'T' -f1)
 PR_DRAFT_BADGE=""
 [ "$PR_DRAFT" = "true" ] && PR_DRAFT_BADGE=" [DRAFT]"
 
-# Step 1: claude -p でレビュー実行、結果を $REVIEW_RESULT に保存 (生データは後段の [c] でも使う)
+# Step 1a: show-me で PR の概要と差分説明 (先頭に WHY / WHAT) をバックグラウンド生成。
+# /review と並行して走らせ、待ち時間を増やさない。
+SHOWME_FILE=$(mktemp)
+trap 'rm -f "$SHOWME_FILE"' EXIT
+SHOWME_PROMPT="/show-me PR #${NUMBER} (${REPO}) の概要と差分を簡単に説明してください。URL: ${URL}
+- 内容は \`gh pr view ${NUMBER} -R ${REPO}\` と \`gh pr diff ${NUMBER} -R ${REPO}\` で確認する。
+- 出力はターミナルにそのまま表示するので、HTML ファイルや Mermaid は使わず、テキストの図 (コールツリー・ファイルツリー・diff など) で示す。
+- 先頭に \`## WHY\` (この PR が必要な理由) と \`## WHAT\` (何を変えたか) をそれぞれ 1〜3 行で書き、その後に差分の簡単な説明を続ける。
+- レビュー (良し悪しの判断) はしない。"
+claude --dangerously-skip-permissions -p "$SHOWME_PROMPT" >"$SHOWME_FILE" 2>&1 &
+SHOWME_PID=$!
+
+# Step 1b: claude -p でレビュー実行、結果を $REVIEW_RESULT に保存 (生データは後段の [c] でも使う)
 REVIEW_RESULT=$(claude --dangerously-skip-permissions -p "/review ${URL}" 2>&1 || true)
+
+# 概要の生成に失敗しても本体のレビューは続ける
+SHOWME_FAILED=false
+wait "$SHOWME_PID" || SHOWME_FAILED=true
+
+print_showme() {
+  [[ "$SHOWME_FAILED" == "true" ]] && echo "⚠️  show-me による概要生成に失敗しました:"
+  cat "$SHOWME_FILE"
+  echo ""
+  echo "────────────────────────────────────────────────────────────────────"
+  echo ""
+}
 
 # "Unknown command: /review" (code-review 名のカスタムコマンドと衝突した環境) や
 # 認証切れ等の1行エラーをレビュー本文として下流に流さない
 if [ "${#REVIEW_RESULT}" -lt 80 ]; then
+  print_showme
   echo "⚠️  レビュー取得に失敗しました: ${REVIEW_RESULT:-（空）}"
   read -r -p "Enter で閉じる" _
   exit 1
@@ -108,11 +133,19 @@ ${REVIEW_RESULT}"
 FORMATTED_RESULT=$(claude --dangerously-skip-permissions -p "$REFORMAT_PROMPT" 2>&1 || echo "")
 
 # reformat が空 / 失敗したら fallback として元レビューをそのまま出す
+# 概要は PR Info と Verdict の間に差し込む (見出しが見つからなければ先頭に出す)
+VERDICT_HEADING="## 🎯 Verdict"
 if [[ -z "${FORMATTED_RESULT// }" ]]; then
+  print_showme
   echo "⚠️  reformat 失敗。 元レビューをそのまま表示します。"
   echo ""
   echo "$REVIEW_RESULT"
+elif [[ "$FORMATTED_RESULT" == *"$VERDICT_HEADING"* ]]; then
+  printf '%s' "${FORMATTED_RESULT%%"$VERDICT_HEADING"*}"
+  print_showme
+  echo "${VERDICT_HEADING}${FORMATTED_RESULT#*"$VERDICT_HEADING"}"
 else
+  print_showme
   echo "$FORMATTED_RESULT"
 fi
 echo ""
