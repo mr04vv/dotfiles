@@ -117,13 +117,15 @@ else
 fi
 echo ""
 
-# 分析完了後、このレビュータブにフォーカスを移動 (herdr / zellij を実行時判定)
+# 分析完了を知らせる (herdr は作業を邪魔しないよう通知のみ / zellij はタブへ移動)
+# herdr の toast は送信元セッションにしか出ないため、どのセッションにいても届く macOS 通知を使う
 if [[ "${HERDR_ENV:-}" == "1" ]]; then
-  REVIEW_TAB_ID=$(herdr tab list 2>/dev/null \
-    | jq -r --arg name "Review: ${REPO}#${NUMBER}" \
-        '.result.tabs[] | select(.label == $name) | .tab_id' 2>/dev/null \
-    | head -1)
-  [[ -n "$REVIEW_TAB_ID" ]] && herdr tab focus "$REVIEW_TAB_ID" >/dev/null 2>&1 || true
+  /Applications/Utilities/Notifier.app/Contents/MacOS/Notifier \
+    --type banner \
+    --title 'Review ready' \
+    --subtitle "${REPO} #${NUMBER}" \
+    --message "$PR_TITLE" \
+    --sound default >/dev/null 2>&1 || true
 else
   zellij action go-to-tab-name "Review: ${REPO}#${NUMBER}" 2>/dev/null || true
 fi
