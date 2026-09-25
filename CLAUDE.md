@@ -41,7 +41,6 @@ flake.nix                   # Entry point: defines 3 hosts, wires inputs
 │   │   ├── zsh.nix         # Zsh + Pure prompt, aliases, PATH, zoxide
 │   │   ├── neovim.nix      # Neovim nightly, 80+ plugins, LSP, Copilot (~1500 lines)
 │   │   ├── tmux.nix        # Tmux with vi mode, custom keybinds
-│   │   ├── zellij.nix      # Zellij multiplexer
 │   │   ├── ghostty.nix     # Ghostty terminal config
 │   │   ├── hammerspoon.nix # macOS window management (Lua)
 │   │   ├── claude.nix      # Claude CLI: skills, settings, hooks, statusline

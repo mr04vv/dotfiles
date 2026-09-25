@@ -6,7 +6,6 @@
     ./zsh.nix
     ./neovim.nix
     ./tmux.nix
-    ./zellij.nix
     ./herdr.nix
     ./ghostty.nix
     ./hammerspoon.nix
