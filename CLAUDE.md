@@ -43,7 +43,6 @@ flake.nix                   # Entry point: defines 3 hosts, wires inputs
 │   │   ├── tmux.nix        # Tmux with vi mode, custom keybinds
 │   │   ├── ghostty.nix     # Ghostty terminal config
 │   │   ├── hammerspoon.nix # macOS window management (Lua)
-│   │   ├── claude.nix      # Claude CLI: skills, settings, hooks, statusline
 │   │   └── fonts.nix       # Font installation (JetBrains Mono, Noto)
 │   └── darwin/             # nix-darwin modules (macOS only)
 │       ├── default.nix     # Imports + nix config + Touch ID sudo
@@ -65,5 +64,5 @@ flake.nix                   # Entry point: defines 3 hosts, wires inputs
 - Platform-specific code uses `pkgs.stdenv.isDarwin` / `pkgs.stdenv.isLinux` conditionals
 - Host-specific overrides go in `hosts/<name>.nix`, shared config goes in `modules/home/`
 - Neovim config is fully declarative Lua embedded in `neovim.nix` (not external config files)
-- `claude.nix` deploys Claude CLI configuration from `modules/home/claude/` to `~/.claude/` via activation hooks
+- Claude Code / Codex config (`~/.claude`, `~/.codex`) is not managed here; it lives in the separate `mr04vv/agent-config` repo and is symlinked by its `install.sh`
 - Nix language (`.nix` files): use nixpkgs-unstable conventions

@@ -45,7 +45,7 @@ in
       EOF
       chmod +x $out/bin/terminal-browser
 
-      # Agent skill definition; claude.nix deploys it to ~/.claude and ~/.codex.
+      # Agent skill definition; agent-config vendors a copy of it.
       install -D -m 644 skill/SKILL.md $out/share/terminal-browser/SKILL.md
 
       runHook postInstall

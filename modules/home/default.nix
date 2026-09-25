@@ -9,7 +9,6 @@
     ./herdr.nix
     ./ghostty.nix
     ./hammerspoon.nix
-    ./claude.nix
     ./fonts.nix
     ./atuin.nix
     ./mise.nix
