@@ -157,4 +157,4 @@ Fix: separate original and translation with one blank line. No horizontal rule.
 This skill defines the format of quotations only. *When* to quote (Assertion-Evidence ordering, what label to use, etc.) is decided by the calling skill.
 
 - `survey`: Assertion-Evidence ordering — state the claim in prose first, then back it up with a quotation. The `label` slot holds the publication or source name.
-- `paper-details`: References to the paper under review omit the author and use position only (`[p.X, Section Y.Z]`). References to other works use `[author-short (YYYY/MM)]`.
+- `paper-details`: References to the paper under review omit the author and use position only (`[p.X, Section Y.Z]`). References to other works use `[author-short (YYYY)]`.

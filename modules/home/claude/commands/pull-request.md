@@ -1,6 +1,6 @@
 ---
 description: "Analyze changes, create granular commits, push to GitHub, and create a pull request"
-allowed-tools: ["Bash", "Git", "GitHub CLI"]
+allowed-tools: ["Bash"]
 ---
 
 ## Push and Create Pull Request
@@ -56,7 +56,7 @@ For projects using changesets (e.g., with `@changesets/cli`):
 
 2. **Create changeset if needed**
    - Run `npx changeset` or `yarn changeset` before creating the PR
-   - Select appropriate version bump (patch/minor/major)
+   - Select the version bump from the diff (patch/minor); ask the user before choosing major
    - Write a clear changeset description
    - Include the generated changeset file in the commit
 

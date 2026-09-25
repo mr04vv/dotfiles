@@ -3,6 +3,9 @@
 {
   home.activation.claudeConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] (''
     # Single files
+    # Shared instructions live in AGENTS.md (codex reads ~/.codex/AGENTS.md);
+    # CLAUDE.md imports it and adds Claude-only rules on top.
+    install -D -m 644 ${./claude/AGENTS.md} ${config.home.homeDirectory}/.codex/AGENTS.md
     install -D -m 644 ${./claude/CLAUDE.md} ${config.home.homeDirectory}/.claude/CLAUDE.md
     # settings.json carries an @HOME@ placeholder for the herdr hook command,
     # since Claude Code takes a literal command string with no home expansion.
