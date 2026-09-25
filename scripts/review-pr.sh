@@ -4,6 +4,7 @@ set -euo pipefail
 URL="$1"
 NUMBER="$2"
 REPO="$3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "🔍 Reviewing PR #${NUMBER} in ${REPO}..."
 echo ""
@@ -151,10 +152,12 @@ fi
 echo ""
 
 # 分析完了を知らせる (herdr は作業を邪魔しないよう通知のみ / zellij はタブへ移動)
-# herdr の toast は送信元セッションにしか出ないため、どのセッションにいても届く macOS 通知を使う
+# herdr の toast は送信元セッションにしか出ないため、どのセッションにいても届く macOS 通知を使う。
+# クリックするとこのレビューのワークスペースへ移動する。
 if [[ "${HERDR_ENV:-}" == "1" ]]; then
   /Applications/Utilities/Notifier.app/Contents/MacOS/Notifier \
     --type banner \
+    --messageaction "${SCRIPT_DIR}/focus-herdr-workspace.sh $(command -v herdr) ${HERDR_SOCKET_PATH:-} ${HERDR_WORKSPACE_ID:-}" \
     --title 'Review ready' \
     --subtitle "${REPO} #${NUMBER}" \
     --message "$PR_TITLE" \
