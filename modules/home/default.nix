@@ -43,7 +43,10 @@
     # ============================================================================
     git
     gh # GitHub CLI
-    gh-review-watcher.packages.${pkgs.stdenv.hostPlatform.system}.default # GitHub review watcher
+    # GitHub review watcher, patched so a transient empty review search doesn't re-fire on_new_pr for every PR
+    (gh-review-watcher.packages.${pkgs.stdenv.hostPlatform.system}.default.overrideAttrs (old: {
+      patches = (old.patches or [ ]) ++ [ ./gh-review-watcher-empty-review.patch ];
+    }))
     github-copilot-cli # GitHub Copilot CLI
     ghq # repository management
     lazygit # TUI for git
