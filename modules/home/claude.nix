@@ -29,14 +29,14 @@
     mkdir -p ${config.home.homeDirectory}/.claude/skills
     chmod -R u+w ${config.home.homeDirectory}/.claude/skills 2>/dev/null || true
     cp -r ${./claude/skills}/. ${config.home.homeDirectory}/.claude/skills/
-    # _shared is a source-only dir (holds the diff-page script shared by
-    # diff-explain and diff-review); it is not a skill, so drop it from the
+    # _shared is a source-only dir (holds the diff-page script used by
+    # diff-explain); it is not a skill, so drop it from the
     # deployed skills tree and fan the script out into each skill's scripts/.
     # chmod first: files copied from the nix store are read-only, and macOS
     # rm refuses to remove read-only files.
     chmod -R u+w ${config.home.homeDirectory}/.claude/skills/_shared 2>/dev/null || true
     rm -rf ${config.home.homeDirectory}/.claude/skills/_shared
-    for skill in diff-explain diff-review; do
+    for skill in diff-explain; do
       mkdir -p ${config.home.homeDirectory}/.claude/skills/$skill/scripts
       install -m 755 ${./claude/skills/_shared/build_diff_page.py} \
         ${config.home.homeDirectory}/.claude/skills/$skill/scripts/build_diff_page.py
@@ -101,13 +101,12 @@
     install -D -m 644 ${./claude/codex/hooks.json} ${config.home.homeDirectory}/.codex/hooks.json
     ${pkgs.gnused}/bin/sed -i 's|@HOME@|${config.home.homeDirectory}|g' \
       ${config.home.homeDirectory}/.codex/hooks.json
-    mkdir -p ${config.home.homeDirectory}/.codex/skills/to-claude
+    mkdir -p ${config.home.homeDirectory}/.codex/skills
     chmod -R u+w ${config.home.homeDirectory}/.codex/skills 2>/dev/null || true
-    cp -r ${./claude/codex/skills}/. ${config.home.homeDirectory}/.codex/skills/
     # shared skills (single source in claude/skills, deployed to both claude and codex)
     # copy CONTENTS into a named dir so the target is ~/.codex/skills/<skill>
     # (not the nix store's <hash>-<skill> path), and fan out the shared script.
-    for skill in diff-explain diff-review; do
+    for skill in diff-explain; do
       mkdir -p ${config.home.homeDirectory}/.codex/skills/$skill/scripts
       cp -r ${./claude/skills}/$skill/. ${config.home.homeDirectory}/.codex/skills/$skill/
       install -m 755 ${./claude/skills/_shared/build_diff_page.py} \
@@ -117,7 +116,7 @@
     # for origins and update procedure). Plain copies -- no shared-script
     # fan-out needed.
     for skill in paper-details html documenting-with-sources writing-quotation explain \
-                 grilling grill-me navigating quizzing tutoring; do
+                 grilling quizzing tutoring; do
       mkdir -p ${config.home.homeDirectory}/.codex/skills/$skill
       cp -r ${./claude/skills}/$skill/. ${config.home.homeDirectory}/.codex/skills/$skill/
     done

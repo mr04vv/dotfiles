@@ -10,9 +10,7 @@ description: >-
   skill when the user wants to UNDERSTAND a diff, not have it critiqued:
   "差分を解説して", "explain the diff", "何を変えたか説明して",
   "このブランチで何を変えたか", "変更内容をまとめて", "diffをブラウザで見たい",
-  "レビュー前に変更を整理して" (understanding sense). If the user wants
-  findings / 指摘 / a critical review, use the sibling skill **diff-review**
-  instead. Do NOT use for reviewing a remote PR by URL, or for one-line diff
+  "レビュー前に変更を整理して" (understanding sense). Do NOT use for reviewing a remote PR by URL, or for one-line diff
   questions answerable inline in chat.
 ---
 
@@ -26,8 +24,7 @@ variant: it does **not** emit review findings (指摘) or 要改善. Humans can
 still add per-line / multi-line comments and, on a branch diff, send those
 comments to the GitHub PR.
 
-指摘・レビューが欲しいときは姉妹スキル **diff-review** を使う。こちらは解説
-専用で、findings/unclear を一切出さない（`render --no-review`）。
+解説専用で、findings/unclear は一切出さない（`render --no-review`）。
 
 Division of labor: `scripts/build_diff_page.py` does everything deterministic
 — diff extraction, parsing, hunk ids, intraline highlighting, HTML rendering,
@@ -127,7 +124,7 @@ Field guidance:
 - **risk**: `high`=挙動変更・境界・並行・移行、`medium`=広いが機械的、
   `low`=docs・生成物・rename。誤りの結果の重大さで判断する（行数ではない）。
 - **tags**: 1–2 語 (`core`, `refactor`, `docs`, `test`, `deps`, `config`).
-- **intent**: なぜこの変更か・設計判断・影響範囲。3〜5 文で (1) 問題・背景
+- **intent**: なぜこの変更か・設計判断・影響範囲。分量は `--detail` に従い (1) 問題・背景
   (2) アプローチと理由 (3) 影響範囲 (4) 代替案/トレードオフ。憶測は明示する。
 - **ハンク単位の解説は3種**（同じハンクに複数可、役割で書き分け重複させない。
   表示順 意図 → コード解説 → 解説）:
@@ -168,7 +165,7 @@ where to start reading.
 
 解説ページでも人間が行/範囲/ハンクにコメントを残せる。それを PR に送りたいと
 言われたら、ページの「PR送信用にコピー」でコピーされた JSON（解説専用なので
-`author` は human のみ）を使って送る。手順は diff-review スキルと同じ:
+`author` は human のみ）を使って送る:
 
 ```bash
 gh pr view <head-branch> --json number -q '.number'

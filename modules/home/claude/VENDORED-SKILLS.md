@@ -48,11 +48,6 @@ done
 | スキル | 上流パス | ピン |
 | --- | --- | --- |
 | `grilling` | `skills/productivity/grilling` | `refs/tags/v1.1.0` |
-| `grill-me` | `skills/productivity/grill-me` | `refs/tags/v1.1.0` |
-
-`grill-me` は `grilling` の重複ではなく、`disable-model-invocation: true` を付けた
-明示呼び出し専用のエントリポイント（本体は「Run a `/grilling` session.」の 1 行）。
-セットで運用するものなので両方取り込んでいる。
 
 **注意**: `grilling` は上流 main が v1.1.0 から文言変更されている
 （対象が "plan" → "plan, decision, or idea"、探索先が "codebase" → "environment"
@@ -66,11 +61,10 @@ done
 
 | スキル | 上流パス |
 | --- | --- |
-| `navigating` | `skills/learning/navigating` |
 | `quizzing` | `skills/learning/quizzing` |
 | `tutoring` | `skills/learning/tutoring` |
 
-3 つとも `disable-model-invocation: true`（明示呼び出し専用）。
+2 つとも `disable-model-invocation: true`（明示呼び出し専用）。
 
 ### 更新手順（mattpocock / yasunori0418 共通）
 
