@@ -97,15 +97,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1785122829,
-        "narHash": "sha256-LaIIILlSJasg5ZhhajWKOBGUm6DihXW5E56vuVlqCLU=",
-        "owner": "EdV4H",
+        "lastModified": 1790341756,
+        "narHash": "sha256-1FcQQGagDypH1j+rnArAa6OtIG6DLjGIorP29U7hB7I=",
+        "owner": "mr04vv",
         "repo": "gh-review-watcher",
-        "rev": "9f1540f38f9e8435dd279ce686315d5d33b2a22e",
+        "rev": "c2d39fd0387cbe678b70bab09ef8139b4134cd1a",
         "type": "github"
       },
       "original": {
-        "owner": "EdV4H",
+        "owner": "mr04vv",
         "repo": "gh-review-watcher",
         "type": "github"
       }

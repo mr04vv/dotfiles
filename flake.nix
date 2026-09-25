@@ -21,7 +21,7 @@
     };
     arto.url = "github:arto-app/Arto";
     gh-review-watcher = {
-      url = "github:EdV4H/gh-review-watcher";
+      url = "github:mr04vv/gh-review-watcher";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
