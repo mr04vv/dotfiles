@@ -1,6 +1,16 @@
 { config, pkgs, ... }:
 
 {
+  # peco (used by cdghq): on the Desert theme, magenta is light beige and cyan
+  # is pink, so the defaults (white text on magenta, cyan matches) are
+  # unreadable. Use black text on the selected line and red for matches.
+  xdg.configFile."peco/config.json".text = builtins.toJSON {
+    Style = {
+      Selected = [ "underline" "on_magenta" "black" ];
+      Matched = [ "red" ];
+    };
+  };
+
   programs.zsh = {
     enable = true;
     enableCompletion = true;
