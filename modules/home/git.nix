@@ -9,7 +9,7 @@
       # User information
       user = {
         name = "mr04vv";
-        email = "mr04vv@gmail.com";
+        email = "24749358+mr04vv@users.noreply.github.com";
       };
 
       # Core settings
