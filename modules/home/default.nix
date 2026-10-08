@@ -175,6 +175,7 @@
     nginx # Web server
     golangci-lint # Go linter
     chezmoi # Dotfiles manager
+    lastpass-cli # LastPass CLI (lpass)
 
     # ============================================================================
     # GUI Applications (macOS)
