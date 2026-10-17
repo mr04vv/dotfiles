@@ -13,6 +13,7 @@
     ./atuin.nix
     ./mise.nix
     ./gh-review-watcher.nix
+    ./antigravity.nix
   ];
 
   # Let Home Manager manage itself
