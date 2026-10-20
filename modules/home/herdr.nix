@@ -7,7 +7,7 @@ let
     source = "mr04vv/herdr-pane-navigator";
     # Pinned so a rebuild cannot silently pull a different version. Bump this
     # after tagging a release upstream.
-    ref = "v0.1.4";
+    ref = "v0.3.1";
   };
 
   # Third-party plugin: renders a real Chromium view inside a Herdr pane and
