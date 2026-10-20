@@ -85,7 +85,6 @@
           {
             nixpkgs.overlays = [
               (import ./overlays/mo.nix)
-              (import ./overlays/gh.nix)
               (import ./overlays/terminal-browser.nix)
               (import ./overlays/pipx.nix)
               (import ./overlays/devin.nix)
@@ -149,7 +148,6 @@
           {
             nixpkgs.overlays = [
               (import ./overlays/mo.nix)
-              (import ./overlays/gh.nix)
               (import ./overlays/terminal-browser.nix)
               (import ./overlays/pipx.nix)
               (import ./overlays/devin.nix)
@@ -177,7 +175,6 @@
             config.allowUnfree = true;
             overlays = [
               (import ./overlays/mo.nix)
-              (import ./overlays/gh.nix)
               (import ./overlays/terminal-browser.nix)
               (import ./overlays/pipx.nix)
               (import ./overlays/devin.nix)
