@@ -49,6 +49,11 @@ in
   xdg.configFile."herdr/config.toml".text = ''
     # herdr configuration
 
+    # The first-run notice: herdr marks it seen in this file, which is
+    # read-only here (the nix store), so it came back on every new client
+    # (each restart of Shosai's terminal pane). Chosen once, here.
+    onboarding = false
+
     [theme]
     # catppuccin is herdr's default base; every token that matters for contrast
     # is overridden below, so the base only supplies the few tokens herdr does
