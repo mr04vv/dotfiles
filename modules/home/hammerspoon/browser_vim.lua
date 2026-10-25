@@ -1,5 +1,5 @@
 -- ブラウザを vim 風に操作する（j/k: Google 検索結果の選択移動（それ以外のページではスクロール）、Shift+J/K: スクロール、
--- 入力欄の Ctrl+j/k: 検索候補の選択移動、Ctrl+h/l: Dia のサイドバー（タブ一覧）とページの行き来）
+-- 入力欄の Ctrl+j/k: 検索候補の選択移動、Ctrl+h/l: Dia のサイドバー（タブ一覧）とページの行き来、タブ一覧の d: タブを閉じる）
 local M = {}
 
 local BROWSER_BUNDLE_IDS = { ["com.google.Chrome"] = true, ["company.thebrowser.dia"] = true }
@@ -30,6 +30,8 @@ local SIDEBAR_TAB_ID_PREFIX = "tab"
 local HIGHLIGHT_COLOR = { red = 0.3, green = 0.6, blue = 1, alpha = 1 }
 local HIGHLIGHT_WIDTH = 2
 local HIGHLIGHT_RADIUS = 6
+-- タブを閉じてからサイドバーの一覧を取り直すまでの待ち（秒）
+local TAB_CLOSE_REFRESH_DELAY = 0.3
 
 function M.isGoogleSearch(url)
   local host, path = url:match("^https?://([^/]+)(/[^?#]*)")
@@ -283,6 +285,15 @@ local function enterSidebar(appEl)
 end
 
 -- サイドバーモード中のキー。戻り値は eventtap のコールバックと同じ（true でキーを捨てる）
+-- el の中央を click（hs.eventtap.leftClick など）でクリックし、マウスの位置を戻す
+local function clickCenter(el, click)
+  local frame = frameOf(el)
+  if not frame then return end
+  local original = hs.mouse.absolutePosition()
+  click({ x = frame.x + frame.w / 2, y = frame.y + frame.h / 2 })
+  hs.mouse.absolutePosition(original)
+end
+
 local function onSidebarKey(char, flags)
   if (char == "j" or char == "k") and not (flags.ctrl or flags.shift) then
     sidebar.index = M.moveIndex(sidebar.index, char == "j" and 1 or -1, #sidebar.tabs)
@@ -291,13 +302,21 @@ local function onSidebarKey(char, flags)
   end
   if char == "return" then
     -- タブは AXPress を名乗るが実際には未対応（kAXErrorActionUnsupported）なので、クリックして開く
-    local frame = frameOf(sidebar.tabs[sidebar.index])
+    local tab = sidebar.tabs[sidebar.index]
     exitSidebar()
-    if frame then
-      local original = hs.mouse.absolutePosition()
-      hs.eventtap.leftClick({ x = frame.x + frame.w / 2, y = frame.y + frame.h / 2 })
-      hs.mouse.absolutePosition(original)
-    end
+    clickCenter(tab, hs.eventtap.leftClick)
+    return true
+  end
+  if char == "d" and not (flags.ctrl or flags.shift) then
+    -- 閉じるボタンは AX に出てこないので、中クリックで閉じる（開かずに閉じられる）
+    clickCenter(sidebar.tabs[sidebar.index], hs.eventtap.otherClick)
+    hs.timer.doAfter(TAB_CLOSE_REFRESH_DELAY, function()
+      if not sidebar then return end
+      sidebar.tabs = sidebarTabs(sidebar.window)
+      if #sidebar.tabs == 0 then return exitSidebar() end
+      sidebar.index = M.moveIndex(sidebar.index, 0, #sidebar.tabs)
+      showHighlight()
+    end)
     return true
   end
   local toPage = flags.ctrl and char == "l"
@@ -422,6 +441,7 @@ if not hs then
   assert(M.currentTabIndex(titles, "Atrae: 見つからない") == 1)
   assert(M.currentTabIndex({}, "Atrae: x") == nil)
   assert(M.moveIndex(1, -1, 3) == 1 and M.moveIndex(3, 1, 3) == 3 and M.moveIndex(2, 1, 3) == 3)
+  assert(M.moveIndex(3, 0, 2) == 2) -- 末尾のタブを閉じたら新しい末尾へ
   print("ok")
   return M
 end

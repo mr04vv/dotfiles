@@ -127,6 +127,9 @@
       if window then window:maximize() end
     end)
 
+    -- 外から hs コマンドで設定を読み込み直せるようにする
+    require("hs.ipc")
+
     -- Slack・ブラウザを vim 風のキーで操作する
     require("slack_vim").start()
     require("browser_vim").start()
