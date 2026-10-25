@@ -126,6 +126,13 @@
       local window = hs.window.focusedWindow()
       if window then window:maximize() end
     end)
+
+    -- Slack・ブラウザを vim 風のキーで操作する
+    require("slack_vim").start()
+    require("browser_vim").start()
     '';
   };
+
+  home.file.".hammerspoon/slack_vim.lua".source = ./hammerspoon/slack_vim.lua;
+  home.file.".hammerspoon/browser_vim.lua".source = ./hammerspoon/browser_vim.lua;
 }
