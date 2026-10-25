@@ -25,7 +25,7 @@ local CURSOR_CLASS = "c-virtual_list__item--focus"
 local ARROW_TYPING_GRACE = 0.3
 -- Esc を Slack が処理（補完ポップアップを閉じる等）してからフォーカスを移すための待ち時間（秒）
 local ESCAPE_FOCUS_DELAY = 0.05
--- チャンネルを開いた後、Slack が入力欄にフォーカスするのを待つ間隔（秒）と最大回数
+-- チャンネルを開いた後、Slack が入力欄にフォーカスするのとメッセージが読み込まれるのを待つ間隔（秒）と最大回数
 local CHANNEL_SWITCH_POLL_INTERVAL = 0.1
 local CHANNEL_SWITCH_MAX_POLLS = 30
 local CTRL_KEYS = { j = true, k = true, h = true, l = true }
@@ -266,8 +266,9 @@ local function focusItem(items, pattern, from, to, step)
   return false
 end
 
--- チャンネルは最新（末尾）のメッセージ、スレッド一覧は先頭のスレッドにフォーカスする
-local function focusMessages(win)
+-- チャンネルは最新（末尾）のメッセージ、スレッド一覧は先頭のスレッドにフォーカスする。
+-- フォーカスできたら true を返す。silent = true なら見つからなくても通知しない
+local function focusMessages(win, silent)
   local pane = findFirst(win, function(el)
     return hasClass(el, MESSAGE_PANE_CLASS) or hasClass(el, THREADS_VIEW_CLASS)
   end, MAX_SEARCH_DEPTH)
@@ -279,9 +280,16 @@ local function focusMessages(win)
     else
       focused = focusItem(items, MESSAGE_ID_PATTERN, #items, 1, -1)
     end
-    if focused then return end
+    if focused then return true end
   end
-  hs.alert.show("slack_vim: メッセージ一覧が見つかりません")
+  if not silent then hs.alert.show("slack_vim: メッセージ一覧が見つかりません") end
+  return false
+end
+
+-- キャッシュのないチャンネルはメッセージの読み込みに時間がかかるので、読み込まれるまで繰り返す
+local function focusMessagesWhenLoaded(win, remaining)
+  if focusMessages(win, remaining > 0) or remaining <= 0 then return end
+  hs.timer.doAfter(CHANNEL_SWITCH_POLL_INTERVAL, function() focusMessagesWhenLoaded(win, remaining - 1) end)
 end
 
 local function keyEvents(mods, key)
@@ -631,6 +639,7 @@ local function onKeyDown(e)
     local function run()
       if action.focus == "sidebar" then focusSidebar(win)
       elseif action.focus == "input" then focusInput(win, focused)
+      elseif action.waitForInput then focusMessagesWhenLoaded(win, CHANNEL_SWITCH_MAX_POLLS)
       else focusMessages(win) end
     end
     -- ツリー探索は重いので、イベントタップのコールバック外で実行する
