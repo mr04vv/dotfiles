@@ -1,5 +1,5 @@
 -- ブラウザを vim 風に操作する（j/k: Google 検索結果の選択移動（それ以外のページではスクロール）、Shift+J/K: スクロール、
--- 入力欄の Ctrl+j/k: 検索候補の選択移動、Ctrl+h/l: Dia のサイドバー（タブ一覧）とページの行き来、タブ一覧の d: タブを閉じる）
+-- Ctrl+j/k: 検索候補などの選択移動（↓/↑）、入力欄の Esc: ページ本体へ抜ける、Ctrl+h/l: Dia のサイドバー（タブ一覧）とページの行き来、タブ一覧の d: タブを閉じる）
 local M = {}
 
 local BROWSER_BUNDLE_IDS = { ["com.google.Chrome"] = true, ["company.thebrowser.dia"] = true }
@@ -32,6 +32,8 @@ local HIGHLIGHT_WIDTH = 2
 local HIGHLIGHT_RADIUS = 6
 -- タブを閉じてからサイドバーの一覧を取り直すまでの待ち（秒）
 local TAB_CLOSE_REFRESH_DELAY = 0.3
+-- 入力欄の Esc をサイトに処理させてから、まだ入力欄にいればページ本体へ移すまでの待ち（秒）
+local ESCAPE_BLUR_DELAY = 0.1
 
 function M.isGoogleSearch(url)
   local host, path = url:match("^https?://([^/]+)(/[^?#]*)")
@@ -43,11 +45,13 @@ function M.isGoogleSearch(url)
 end
 
 -- スクロール { scroll = 1 | -1 }、リンクの選択移動 { select = 1 | -1 }、矢印キー { key = "down" | "up" }、
--- または nil（キーをそのまま通す）を返す
+-- 入力欄から抜ける { blur = true }、または nil（キーをそのまま通す）を返す
 function M.decide(char, shift, editable, ctrl)
+  if char == "escape" then return editable and { blur = true } or nil end
   local dir = ({ j = 1, k = -1 })[char]
   if not dir then return nil end
-  if ctrl then return editable and { key = dir == 1 and "down" or "up" } or nil end
+  -- 候補を選ぶと一覧の項目にフォーカスが移るサイトもあるので、入力欄の外でも ↓/↑ を送る
+  if ctrl then return { key = dir == 1 and "down" or "up" } end
   if editable then return nil end
   if shift then return { scroll = dir } end
   return { select = dir }
@@ -82,6 +86,12 @@ function M.currentTabIndex(titles, windowTitle)
   return 1
 end
 
+-- Ctrl+h でサイドバーに入ってよいか。Dia の新規タブはページがなくコマンドバー（入力欄）から抜けられないので、
+-- ページ外の入力欄では入る。ページ内の入力欄では 1 文字削除として通す
+function M.canEnterSidebar(editable, inPage)
+  return not (editable and inPage)
+end
+
 function M.moveIndex(index, dir, count)
   return math.max(1, math.min(count, index + dir))
 end
@@ -107,6 +117,10 @@ end
 local function visibleHeightOf(el)
   local size = el:attributeValue("AXSize")
   return size and size.h or 0
+end
+
+local function isEditable(el)
+  return el ~= nil and (TEXT_ROLES[el:attributeValue("AXRole")] or el:attributeValue("AXEditableAncestor") ~= nil)
 end
 
 local function webAreaOf(el)
@@ -352,19 +366,18 @@ local function onKeyDown(e)
   if sidebar then return onSidebarKey(char, flags) end
   if flags.cmd or flags.alt or flags.fn then return false end
   local ctrlH = flags.ctrl and char == "h"
-  if char ~= "j" and char ~= "k" and not ctrlH then return false end
+  if char ~= "j" and char ~= "k" and char ~= "escape" and not ctrlH then return false end
   -- 候補を探している途中の j/k は捨てる（押しっぱなしでも順に進む）
-  if busy then return true end
+  if busy and char ~= "escape" then return true end
 
   local appEl = hs.axuielement.applicationElement(app)
   -- Chromium はこれを立てないと Web ページの中身を AX に公開しない
   appEl:setAttributeValue("AXManualAccessibility", true)
   local focused = appEl:attributeValue("AXFocusedUIElement")
-  local editable = focused ~= nil
-    and (TEXT_ROLES[focused:attributeValue("AXRole")] or focused:attributeValue("AXEditableAncestor") ~= nil)
+  local editable = isEditable(focused)
   if ctrlH then
-    -- 入力欄の Ctrl+h（1 文字削除）はそのまま通す。サイドバーがあるのは Dia だけ
-    if editable or app:bundleID() ~= DIA_BUNDLE_ID then return false end
+    -- サイドバーがあるのは Dia だけ
+    if app:bundleID() ~= DIA_BUNDLE_ID or not M.canEnterSidebar(editable, webAreaOf(focused) ~= nil) then return false end
     hs.timer.doAfter(0, function() enterSidebar(appEl) end)
     return true
   end
@@ -375,6 +388,15 @@ local function onKeyDown(e)
   if not editable and not webArea then return false end
   local action = M.decide(char, flags.shift == true, editable, flags.ctrl == true)
   if not action then return false end
+  if action.blur then
+    -- 新規タブや ChatGPT のように最初から入力欄にいるページでも、Esc でページ本体へ抜けて j/k などを使えるようにする。
+    -- Esc はサイト（ダイアログを閉じるなど）にも渡す
+    local window = appEl:attributeValue("AXFocusedWindow")
+    hs.timer.doAfter(ESCAPE_BLUR_DELAY, function()
+      if window and isEditable(appEl:attributeValue("AXFocusedUIElement")) then focusPage(window) end
+    end)
+    return false
+  end
   if action.key then return true, keyEvents({}, action.key) end
   if action.scroll then return true, scrollEvents(action.scroll) end
 
@@ -412,18 +434,20 @@ if not hs then
 
   local function same(a, b)
     a, b = a or {}, b or {}
-    return a.scroll == b.scroll and a.select == b.select and a.key == b.key
+    return a.scroll == b.scroll and a.select == b.select and a.key == b.key and a.blur == b.blur
   end
   local cases = {
     { "j", false, true, nil },
     { "j", false, true, { key = "down" }, true }, -- 入力欄の Ctrl+j/k は候補の選択移動
     { "k", false, true, { key = "up" }, true },
-    { "j", false, false, nil, true },
+    { "j", false, false, { key = "down" }, true }, -- 候補の一覧にフォーカスが移った後も Ctrl+j/k は 1 つずつ
     { "j", false, false, { select = 1 } },
     { "k", false, false, { select = -1 } },
     { "j", true, false, { scroll = 1 } },
     { "k", true, false, { scroll = -1 } },
     { "h", false, false, nil },
+    { "escape", false, true, { blur = true } }, -- 入力欄の Esc はページ本体へ抜ける
+    { "escape", false, false, nil },
   }
   for i, c in ipairs(cases) do
     assert(same(M.decide(c[1], c[2], c[3], c[5]), c[4]), ("case %d failed"):format(i))
@@ -445,6 +469,10 @@ if not hs then
   assert(M.currentTabIndex({}, "Atrae: x") == nil)
   assert(M.moveIndex(1, -1, 3) == 1 and M.moveIndex(3, 1, 3) == 3 and M.moveIndex(2, 1, 3) == 3)
   assert(M.moveIndex(3, 0, 2) == 2) -- 末尾のタブを閉じたら新しい末尾へ
+  -- canEnterSidebar(入力欄か, ページ内か): ページ内の入力欄の Ctrl+h は 1 文字削除に残す
+  assert(M.canEnterSidebar(false, true))
+  assert(not M.canEnterSidebar(true, true))
+  assert(M.canEnterSidebar(true, false)) -- 新規タブのコマンドバーやアドレスバー
   print("ok")
   return M
 end
