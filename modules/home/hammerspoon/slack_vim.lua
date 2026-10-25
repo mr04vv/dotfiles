@@ -1,4 +1,4 @@
--- Slack を vim 風に操作する（j/k: 選択移動, J/K: スクロール, Ctrl+j/k: サイドバーのセクション単位で移動, Ctrl+h/l: サイドバー/メッセージ一覧へ移動, Enter: スレッドを開く, Tab: 投稿内のリンク・添付ファイルを巡回, i: 入力欄へ）
+-- Slack を vim 風に操作する（j/k: 選択移動, J/K: スクロール, Ctrl+j/k: サイドバーのセクション単位で移動（入力欄ではメンションなどの候補の選択移動）, Ctrl+h/l: サイドバー/メッセージ一覧へ移動, Enter: スレッドを開く, Tab: 投稿内のリンク・添付ファイルを巡回, i: 入力欄へ, f: 検索）
 local M = {}
 
 local SLACK_BUNDLE_ID = "com.tinyspeck.slackmacgap"
@@ -29,7 +29,10 @@ local ESCAPE_FOCUS_DELAY = 0.05
 local CHANNEL_SWITCH_POLL_INTERVAL = 0.1
 local CHANNEL_SWITCH_MAX_POLLS = 30
 local CTRL_KEYS = { j = true, k = true, h = true, l = true }
-local HANDLED_KEYS = { j = true, k = true, h = true, l = true, i = true, escape = true, ["return"] = true, tab = true }
+local HANDLED_KEYS = { j = true, k = true, h = true, l = true, i = true, f = true, escape = true, ["return"] = true, tab = true }
+-- Slack の検索のショートカット（Cmd+G）
+local SEARCH_KEY = "g"
+local SEARCH_MODS = { "cmd" }
 local TEXT_ROLES = { AXTextArea = true, AXTextField = true, AXComboBox = true, AXSearchField = true }
 local SIDEBAR_CLASS = "p-channel_sidebar"
 -- スレッド一覧などのページは行自体に、チャンネルは行の子要素に選択中クラスが付く
@@ -40,6 +43,8 @@ local MESSAGE_PANE_CLASS = "p-message_pane"
 local THREADS_VIEW_CLASS = "p-threads_view"
 local THREAD_PANE_CLASS = "p-threads_flexpane"
 local PRIMARY_VIEW_CLASS = "p-view_contents--primary"
+-- メッセージ入力欄（チャンネル・スレッド）を囲む要素のクラス。検索欄と区別する
+local COMPOSER_CLASS = "c-wysiwyg_container"
 local REPLY_COUNT_CLASS = "c-message__reply_count"
 -- Tab 巡回から外すリンク（投稿時刻・ファイルのダウンロード等のアイコン）
 local NON_CONTENT_LINK_CLASSES = { "c-timestamp", "c-message_actions__button" }
@@ -124,19 +129,25 @@ end
 -- フォーカス移動の focus は "sidebar" | "messages" | "input"。waitForInput = true は入力欄にフォーカスが移るのを待ってから移す。
 -- スレッドを開く { openThread = true }、投稿内リンク巡回 { cycleLink = 1 | -1 }、または nil（キーをそのまま通す）を返す。
 -- passthrough = true はキーを通したうえでフォーカスを移す
-function M.decide(char, shift, role, pane, ctrl)
+function M.decide(char, shift, role, pane, ctrl, emptyComposer)
   -- 入力欄では Esc で抜けてメッセージ一覧へ移る
   if char == "escape" and TEXT_ROLES[role] then return { focus = "messages", passthrough = true } end
-  -- フォーカス不明時に入力中の文字を食わないよう、role が取れないときも素通しする
-  if role == nil or TEXT_ROLES[role] then return nil end
+  -- フォーカス不明時に入力中の文字を食わないよう、role が取れないときは素通しする
+  if role == nil then return nil end
   local dir = ({ j = 1, k = -1 })[char]
   if ctrl then
-    -- スレッド欄からは真ん中のメッセージ一覧へ戻る
+    -- ペインの移動は入力欄でも効かせる。スレッド欄からは真ん中のメッセージ一覧へ戻る
     if char == "h" then return { focus = pane == "thread" and "messages" or "sidebar" } end
     if char == "l" then return { focus = "messages" } end
-    if dir and pane == "sidebar" then return { section = dir } end
-    return nil
+    if not dir then return nil end
+    if pane == "sidebar" then return { section = dir } end
+    -- メンション・検索などの候補の選択移動（選択中は Slack が候補の項目にフォーカスを移すので、入力欄の外でも送る）。
+    -- 空のメッセージ入力欄の ↑ は直前の投稿の編集になるので送らない
+    if emptyComposer then return nil end
+    return { press = dir == 1 and "down" or "up" }
   end
+  if TEXT_ROLES[role] then return nil end
+  if char == "f" and not shift then return { press = SEARCH_KEY, pressMods = SEARCH_MODS } end
   if char == "i" and not shift then return { focus = "input" } end
   if char == "return" then
     if shift then return nil end
@@ -292,10 +303,13 @@ local function focusMessagesWhenLoaded(win, remaining)
   hs.timer.doAfter(CHANNEL_SWITCH_POLL_INTERVAL, function() focusMessagesWhenLoaded(win, remaining - 1) end)
 end
 
+-- 修飾キーは mods だけにする（押している Ctrl などが引き継がれると Ctrl+↓ のように別のキーになる）
 local function keyEvents(mods, key)
+  local flags = {}
+  for _, mod in ipairs(mods or {}) do flags[mod] = true end
   return {
-    hs.eventtap.event.newKeyEvent(mods or {}, key, true),
-    hs.eventtap.event.newKeyEvent(mods or {}, key, false),
+    hs.eventtap.event.newKeyEvent(mods or {}, key, true):setFlags(flags),
+    hs.eventtap.event.newKeyEvent(mods or {}, key, false):setFlags(flags),
   }
 end
 
@@ -598,12 +612,21 @@ local function onKeyDown(e)
   if stepping and (char == "j" or char == "k") then return true end
   local appEl = slackElement(app)
   local role, pane, scrollPoint, focused = inspectFocus(appEl)
+  -- inspectFocus は入力中の負荷を避けて入力欄のペインを調べないので、Ctrl+h でスレッド欄から戻るときだけ調べる
+  if flags.ctrl and TEXT_ROLES[role] and ancestorWithClass(focused, THREAD_PANE_CLASS) then pane = "thread" end
   if TEXT_ROLES[role] and (char == "j" or char == "k")
     and hs.timer.secondsSinceEpoch() - lastArrowAt < ARROW_TYPING_GRACE then
     return true
   end
-  local action = M.decide(char, flags.shift == true, role, pane, flags.ctrl == true)
+  local emptyComposer = false
+  if flags.ctrl and TEXT_ROLES[role] then
+    local value = focused:attributeValue("AXValue")
+    emptyComposer = not (type(value) == "string" and value:match("%S"))
+      and ancestorWithClass(focused, COMPOSER_CLASS) ~= nil
+  end
+  local action = M.decide(char, flags.shift == true, role, pane, flags.ctrl == true, emptyComposer)
   if not action then return false end
+  if action.press then return true, keyEvents(action.pressMods, action.press) end
   if action.section then
     local events = sectionKeyEvents(focused, action.section)
     if not events then return true end
@@ -674,13 +697,25 @@ if not hs then
     a, b = a or {}, b or {}
     return a.key == b.key and a.scroll == b.scroll and a.focus == b.focus and a.passthrough == b.passthrough
       and a.openThread == b.openThread and a.cycleLink == b.cycleLink and a.waitForInput == b.waitForInput
-      and a.section == b.section
+      and a.section == b.section and a.press == b.press
+      and table.concat(a.pressMods or {}, "+") == table.concat(b.pressMods or {}, "+")
   end
   local cases = {
     { "j", false, "AXTextArea", nil, nil },
     { "j", false, "AXTextField", "sidebar", nil },
     { "j", false, nil, nil, nil },
-    { "h", false, "AXTextArea", nil, nil, true },
+    { "h", false, "AXTextArea", nil, { focus = "sidebar" }, true }, -- 入力欄でも Ctrl+h/l でペインを移る
+    { "l", false, "AXTextArea", nil, { focus = "messages" }, true },
+    { "h", false, "AXTextArea", "thread", { focus = "messages" }, true },
+    -- 入力欄の Ctrl+j/k はメンション・検索などの候補の選択移動（空のメッセージ入力欄の ↑ は直前の投稿の編集になるので送らない）
+    { "j", false, "AXTextArea", nil, { press = "down" }, true },
+    { "k", false, "AXTextArea", nil, { press = "up" }, true },
+    { "k", false, "AXTextArea", nil, nil, true, true },
+    -- f で検索（Cmd+G）
+    { "f", false, "AXGroup", nil, { press = "g", pressMods = { "cmd" } } },
+    { "f", false, "AXRow", "sidebar", { press = "g", pressMods = { "cmd" } } },
+    { "f", false, "AXTextArea", nil, nil },
+    { "f", true, "AXGroup", nil, nil },
     { "j", false, "AXGroup", nil, { key = "down" } },
     { "k", false, "AXGroup", nil, { key = "up" } },
     { "j", true, "AXGroup", nil, { scroll = 1 } },
@@ -691,9 +726,11 @@ if not hs then
     { "k", true, "AXRow", "sidebar", { scroll = -1 } },
     { "j", false, "AXRow", "sidebar", { section = 1 }, true },
     { "k", false, "AXRow", "sidebar", { section = -1 }, true },
-    { "j", false, "AXGroup", nil, nil, true },
+    -- 候補の選択中は Slack が候補の項目（AXStaticText）にフォーカスを移すので、入力欄の外でも Ctrl+j/k は ↓/↑
+    { "j", false, "AXStaticText", nil, { press = "down" }, true },
+    { "k", false, "AXGroup", nil, { press = "up" }, true },
     { "h", false, "AXRow", "sidebar", { focus = "sidebar" }, true },
-    { "j", false, "AXTextArea", nil, nil, true },
+    { "j", false, "AXTextArea", nil, { press = "down" }, true },
     { "h", false, "AXGroup", nil, { focus = "sidebar" }, true },
     { "l", false, "AXRow", "sidebar", { focus = "messages" }, true },
     { "h", false, "AXGroup", nil, nil }, -- ペイン移動は Ctrl+h/l だけ
@@ -768,7 +805,7 @@ if not hs then
   assert(anchor == 4 and anchorDir == -1) -- 手前になければ後ろの投稿から上へ
   assert(M.anchorIndex({ "message-list_1.1" }, 1) == nil)
   for i, c in ipairs(cases) do
-    assert(same(M.decide(c[1], c[2], c[3], c[4], c[6] == true), c[5]),
+    assert(same(M.decide(c[1], c[2], c[3], c[4], c[6] == true, c[7] == true), c[5]),
       ("case %d failed: %s shift=%s %s %s ctrl=%s"):format(i, c[1], c[2], c[3], c[4], c[6]))
   end
   print("ok")
