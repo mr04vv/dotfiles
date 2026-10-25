@@ -42,7 +42,8 @@ flake.nix                   # Entry point: defines 3 hosts, wires inputs
 │   │   ├── neovim.nix      # Neovim nightly, 80+ plugins, LSP, Copilot (~1500 lines)
 │   │   ├── tmux.nix        # Tmux with vi mode, custom keybinds
 │   │   ├── ghostty.nix     # Ghostty terminal config
-│   │   ├── hammerspoon.nix # macOS window management (Lua)
+│   │   ├── hammerspoon.nix # Hammerspoon init.lua: window management + loads hammerspoon/*.lua
+│   │   ├── hammerspoon/    # Vim-style keys for Slack (slack_vim.lua) and Chrome/Dia (browser_vim.lua)
 │   │   └── fonts.nix       # Font installation (JetBrains Mono, Noto)
 │   └── darwin/             # nix-darwin modules (macOS only)
 │       ├── default.nix     # Imports + nix config + Touch ID sudo
