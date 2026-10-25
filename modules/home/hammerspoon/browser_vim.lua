@@ -1,5 +1,5 @@
--- ブラウザを vim 風に操作する（j/k: リンクの選択移動（Google 検索結果ページでは検索結果だけ）、Shift+J/K: スクロール、
--- Ctrl+h/l: Dia のサイドバー（タブ一覧）とページの行き来）
+-- ブラウザを vim 風に操作する（j/k: Google 検索結果の選択移動（それ以外のページではスクロール）、Shift+J/K: スクロール、
+-- 入力欄の Ctrl+j/k: 検索候補の選択移動、Ctrl+h/l: Dia のサイドバー（タブ一覧）とページの行き来）
 local M = {}
 
 local BROWSER_BUNDLE_IDS = { ["com.google.Chrome"] = true, ["company.thebrowser.dia"] = true }
@@ -15,9 +15,15 @@ local MIN_VISIBLE_HEIGHT = 10
 -- AX でフォーカスを移すときの応答待ち（秒）。Chromium はフォーカス変更の応答が遅く、既定値だと Hammerspoon が数秒固まる。
 -- 応答を待たなくてもフォーカスは移る
 local FOCUS_TIMEOUT = 0.1
+-- フォーカスしたリンクがスクロールで画面内に入るのを待ってから枠を描き直す（秒）
+local LINK_HIGHLIGHT_REDRAW_DELAY = 0.2
 -- www.google.com / www.google.co.jp / www.google.com.au など
 local GOOGLE_HOST_PATTERNS = { "^www%.google%.%a+$", "^www%.google%.co%.%a+$", "^www%.google%.com%.%a+$" }
 local GOOGLE_SEARCH_PATH = "/search"
+-- 通常の検索結果の見出し（h3）のクラス。動画・ニュース・X の投稿などのカードは別のクラスなので候補にしない
+local RESULT_HEADING_CLASS = "LC20lb"
+-- AI による概要の「もっと見る」ボタンのクラス。これも候補にする
+local AI_OVERVIEW_MORE_CLASS = "Jzkafd"
 local DIA_BUNDLE_ID = "company.thebrowser.dia"
 -- Dia のサイドバーのタブは識別子が "tab" で始まる
 local SIDEBAR_TAB_ID_PREFIX = "tab"
@@ -34,11 +40,13 @@ function M.isGoogleSearch(url)
   return false
 end
 
--- スクロール { scroll = 1 | -1 }、リンクの選択移動 { select = 1 | -1 }、または nil（キーをそのまま通す）を返す
-function M.decide(char, shift, editable)
-  if editable then return nil end
+-- スクロール { scroll = 1 | -1 }、リンクの選択移動 { select = 1 | -1 }、矢印キー { key = "down" | "up" }、
+-- または nil（キーをそのまま通す）を返す
+function M.decide(char, shift, editable, ctrl)
   local dir = ({ j = 1, k = -1 })[char]
   if not dir then return nil end
+  if ctrl then return editable and { key = dir == 1 and "down" or "up" } or nil end
+  if editable then return nil end
   if shift then return { scroll = dir } end
   return { select = dir }
 end
@@ -111,22 +119,35 @@ local function urlOf(webArea)
   return type(url) == "string" and url or ""
 end
 
--- Google の検索結果は見出し（h3）を含むリンク
-local function isResultLink(el)
-  for _, child in ipairs(el:attributeValue("AXChildren") or {}) do
-    if child:attributeValue("AXRole") == "AXHeading" then return true end
+local function hasClass(el, name)
+  for _, class in ipairs(el:attributeValue("AXDOMClassList") or {}) do
+    if class == name then return true end
   end
   return false
 end
 
--- 候補のリンクを文書順に集める。Google 検索結果ページでは検索結果だけ、それ以外のページではすべてのリンク
-local function candidateLinks(webArea, resultsOnly)
+-- Google の検索結果は見出し（h3.LC20lb）を含むリンク
+local function isResultLink(el)
+  for _, child in ipairs(el:attributeValue("AXChildren") or {}) do
+    if child:attributeValue("AXRole") == "AXHeading" and hasClass(child, RESULT_HEADING_CLASS) then return true end
+  end
+  return false
+end
+
+-- Google 検索結果ページの検索結果（と AI による概要の「もっと見る」）を文書順に集める。それ以外のページでは空
+local function candidateLinks(webArea)
   local links, visited = {}, 0
+  if not M.isGoogleSearch(urlOf(webArea)) then return links end
   local function walk(el, depth)
     visited = visited + 1
     if visited > MAX_SEARCH_NODES then return end
-    if el:attributeValue("AXRole") == "AXLink" then
-      if not resultsOnly or isResultLink(el) then table.insert(links, el) end
+    local role = el:attributeValue("AXRole")
+    if role == "AXLink" then
+      if isResultLink(el) then table.insert(links, el) end
+      return
+    end
+    if role == "AXButton" and hasClass(el, AI_OVERVIEW_MORE_CLASS) then
+      table.insert(links, el)
       return
     end
     if depth <= 0 then return end
@@ -136,16 +157,48 @@ local function candidateLinks(webArea, resultsOnly)
   return links
 end
 
+local function frameOf(el)
+  local pos, size = el:attributeValue("AXPosition"), el:attributeValue("AXSize")
+  return pos and size and { x = pos.x, y = pos.y, w = size.w, h = size.h }
+end
+
+-- el の位置に枠を描く（canvas があれば動かす）。描いた canvas を返す
+local function drawHighlight(canvas, el)
+  local frame = frameOf(el)
+  if not frame then return canvas end
+  if canvas then return canvas:frame(frame) end
+  return hs.canvas.new(frame):appendElements({
+    type = "rectangle",
+    action = "stroke",
+    strokeColor = HIGHLIGHT_COLOR,
+    strokeWidth = HIGHLIGHT_WIDTH,
+    roundedRectRadii = { xRadius = HIGHLIGHT_RADIUS, yRadius = HIGHLIGHT_RADIUS },
+  }):show()
+end
+
+-- マウス操作の後は AX でフォーカスしてもページのフォーカスリングが出ない（:focus-visible はキーボード操作の後だけ）ので、
+-- 選んだリンクには Hammerspoon 側で枠を描く。スクロールすると位置がずれるので、j/k 以外の操作で消す
+local linkCanvas = nil
+
+local function clearLinkHighlight()
+  if linkCanvas then linkCanvas:delete() end
+  linkCanvas = nil
+end
+
 local function focusLink(link)
   link:setTimeout(FOCUS_TIMEOUT)
   link:setAttributeValue("AXFocused", true)
+  linkCanvas = drawHighlight(linkCanvas, link)
+  hs.timer.doAfter(LINK_HIGHLIGHT_REDRAW_DELAY, function()
+    if linkCanvas then linkCanvas = drawHighlight(linkCanvas, link) end
+  end)
 end
 
 local busy = false
 
 -- 選択中のリンクから dir 方向の候補へ。候補がひとつもないページではスクロールする
 local function selectLink(webArea, focused, dir)
-  local links = candidateLinks(webArea, M.isGoogleSearch(urlOf(webArea)))
+  local links = candidateLinks(webArea)
   if #links == 0 then
     for _, ev in ipairs(scrollEvents(dir)) do ev:post() end
     return
@@ -192,25 +245,9 @@ local function tabTitle(tab)
   return find(tab, MAX_ANCESTOR_DEPTH) or ""
 end
 
-local function frameOf(el)
-  local pos, size = el:attributeValue("AXPosition"), el:attributeValue("AXSize")
-  return pos and size and { x = pos.x, y = pos.y, w = size.w, h = size.h }
-end
 
 local function showHighlight()
-  local frame = frameOf(sidebar.tabs[sidebar.index])
-  if not frame then return end
-  if sidebar.canvas then
-    sidebar.canvas:frame(frame)
-    return
-  end
-  sidebar.canvas = hs.canvas.new(frame):appendElements({
-    type = "rectangle",
-    action = "stroke",
-    strokeColor = HIGHLIGHT_COLOR,
-    strokeWidth = HIGHLIGHT_WIDTH,
-    roundedRectRadii = { xRadius = HIGHLIGHT_RADIUS, yRadius = HIGHLIGHT_RADIUS },
-  }):show()
+  sidebar.canvas = drawHighlight(sidebar.canvas, sidebar.tabs[sidebar.index])
 end
 
 local function focusPage(window)
@@ -273,13 +310,18 @@ local function onSidebarKey(char, flags)
 end
 
 local function onKeyDown(e)
-  -- クリックしたらサイドバーモードを抜ける
-  if e:getType() == hs.eventtap.event.types.leftMouseDown then
+  local eventType = e:getType()
+  -- クリック・スクロールしたらサイドバーモードとリンクの枠を消す
+  if eventType == hs.eventtap.event.types.leftMouseDown or eventType == hs.eventtap.event.types.scrollWheel then
     exitSidebar()
+    clearLinkHighlight()
     return false
   end
   local flags = e:getFlags()
   local char = hs.keycodes.map[e:getKeyCode()]
+  if not ((char == "j" or char == "k") and not (flags.shift or flags.ctrl or flags.cmd or flags.alt)) then
+    clearLinkHighlight()
+  end
   local app = hs.application.frontmostApplication()
   if not app or not BROWSER_BUNDLE_IDS[app:bundleID()] then
     exitSidebar()
@@ -288,7 +330,6 @@ local function onKeyDown(e)
   if sidebar then return onSidebarKey(char, flags) end
   if flags.cmd or flags.alt or flags.fn then return false end
   local ctrlH = flags.ctrl and char == "h"
-  if flags.ctrl and not ctrlH then return false end
   if char ~= "j" and char ~= "k" and not ctrlH then return false end
   -- 候補を探している途中の j/k は捨てる（押しっぱなしでも順に進む）
   if busy then return true end
@@ -310,8 +351,9 @@ local function onKeyDown(e)
   local webArea = not editable and webAreaOf(focused)
   -- アドレスバー以外のブラウザ UI（タブ・サイドバー等）にフォーカスがあるときも素通しする
   if not editable and not webArea then return false end
-  local action = M.decide(char, flags.shift == true, editable)
+  local action = M.decide(char, flags.shift == true, editable, flags.ctrl == true)
   if not action then return false end
+  if action.key then return true, keyEvents({}, action.key) end
   if action.scroll then return true, scrollEvents(action.scroll) end
 
   -- ページ全体をたどるので、イベントタップのコールバック外で実行する
@@ -328,7 +370,11 @@ end
 -- 再度 dofile したときに前のタップを止められるようグローバルに保持する
 function M.start()
   if browserVimTap then browserVimTap:stop() end
-  browserVimTap = hs.eventtap.new({ hs.eventtap.event.types.keyDown, hs.eventtap.event.types.leftMouseDown }, onKeyDown)
+  browserVimTap = hs.eventtap.new({
+    hs.eventtap.event.types.keyDown,
+    hs.eventtap.event.types.leftMouseDown,
+    hs.eventtap.event.types.scrollWheel,
+  }, onKeyDown)
   browserVimTap:start()
 end
 
@@ -344,10 +390,13 @@ if not hs then
 
   local function same(a, b)
     a, b = a or {}, b or {}
-    return a.scroll == b.scroll and a.select == b.select
+    return a.scroll == b.scroll and a.select == b.select and a.key == b.key
   end
   local cases = {
     { "j", false, true, nil },
+    { "j", false, true, { key = "down" }, true }, -- 入力欄の Ctrl+j/k は候補の選択移動
+    { "k", false, true, { key = "up" }, true },
+    { "j", false, false, nil, true },
     { "j", false, false, { select = 1 } },
     { "k", false, false, { select = -1 } },
     { "j", true, false, { scroll = 1 } },
@@ -355,7 +404,7 @@ if not hs then
     { "h", false, false, nil },
   }
   for i, c in ipairs(cases) do
-    assert(same(M.decide(c[1], c[2], c[3]), c[4]), ("case %d failed"):format(i))
+    assert(same(M.decide(c[1], c[2], c[3], c[5]), c[4]), ("case %d failed"):format(i))
   end
 
   -- targetIndex(選択中の位置, 選択中が画面内か, 各候補の見えている高さ, 向き)
