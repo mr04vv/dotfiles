@@ -86,10 +86,13 @@ function M.moveIndex(index, dir, count)
   return math.max(1, math.min(count, index + dir))
 end
 
+-- 修飾キーは mods だけにする（押している Ctrl などが引き継がれると Ctrl+↓ のように別のキーになる）
 local function keyEvents(mods, key)
+  local flags = {}
+  for _, mod in ipairs(mods or {}) do flags[mod] = true end
   return {
-    hs.eventtap.event.newKeyEvent(mods, key, true),
-    hs.eventtap.event.newKeyEvent(mods, key, false),
+    hs.eventtap.event.newKeyEvent(mods or {}, key, true):setFlags(flags),
+    hs.eventtap.event.newKeyEvent(mods or {}, key, false):setFlags(flags),
   }
 end
 
