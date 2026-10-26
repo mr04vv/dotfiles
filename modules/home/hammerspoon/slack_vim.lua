@@ -1,4 +1,4 @@
--- Slack を vim 風に操作する（j/k: 選択移動, J/K: スクロール, Ctrl+j/k: サイドバーのセクション単位で移動（入力欄ではメンションなどの候補の選択移動）, Ctrl+h/l: サイドバー/メッセージ一覧へ移動, Enter: スレッドを開く, Tab: 投稿内のリンク・添付ファイルを巡回, i: 入力欄へ, f: 検索）
+-- Slack を vim 風に操作する（j/k: 選択移動, J/K: スクロール, Ctrl+j/k: サイドバーでは未読のチャンネルへ移動（ほかではメンション・検索などの候補の選択移動）, Ctrl+h/l: サイドバー/メッセージ一覧へ移動, Enter: スレッドを開く, Tab: 投稿内のリンク・添付ファイルを巡回, i: 入力欄へ, f: 検索）
 local M = {}
 
 local SLACK_BUNDLE_ID = "com.tinyspeck.slackmacgap"
@@ -39,6 +39,7 @@ local TEXT_ROLES = { AXTextArea = true, AXTextField = true, AXComboBox = true, A
 local SIDEBAR_CLASS = "p-channel_sidebar"
 -- スレッド一覧などのページは行自体に、チャンネルは行の子要素に選択中クラスが付く
 local SECTION_HEADING_ID_PREFIX = "sectionHeading-"
+local UNREAD_CHANNEL_CLASS = "p-channel_sidebar__channel--unread"
 local SELECTED_ROW_CLASS = "p-channel_sidebar__static_list__item--selected"
 local SELECTED_CHANNEL_CLASS = "p-channel_sidebar__channel--selected"
 local MESSAGE_PANE_CLASS = "p-message_pane"
@@ -87,12 +88,11 @@ function M.visibleMessageIndex(ids, heights, dir)
   return nil
 end
 
--- サイドバーを上から並べた行のうち current 番目から、dir 方向で最寄りのセクション見出しまでの矢印キー回数（符号付き）を返す。
--- 見出しはそのセクションのチャンネルより前に並ぶので、上方向でセクション内にいればその見出しが最寄りになる
-function M.headingSteps(isHeading, current, dir)
+-- 1〜count 番目の行のうち current 番目から dir 方向で isTarget(i) を満たす最寄りの行までの矢印キー回数（符号付き）を返す
+function M.stepsUntil(count, current, dir, isTarget)
   local i = current + dir
-  while i >= 1 and i <= #isHeading do
-    if isHeading[i] then return i - current end
+  while i >= 1 and i <= count do
+    if isTarget(i) then return i - current end
     i = i + dir
   end
   return nil
@@ -127,7 +127,7 @@ function M.nextMessageIndex(ids, index, dir)
   return nil
 end
 
--- 送るキー { key, mods }、スクロール { scroll = 1 | -1 }、セクション移動 { section = 1 | -1 }、フォーカス移動 { focus = "sidebar" | "messages" }、
+-- 送るキー { key, mods }、スクロール { scroll = 1 | -1 }、未読のチャンネルへ移動 { unread = 1 | -1 }、フォーカス移動 { focus = "sidebar" | "messages" }、
 -- フォーカス移動の focus は "sidebar" | "messages" | "input"。waitForInput = true は入力欄にフォーカスが移るのを待ってから移す。
 -- スレッドを開く { openThread = true }、投稿内リンク巡回 { cycleLink = 1 | -1 }、または nil（キーをそのまま通す）を返す。
 -- passthrough = true はキーを通したうえでフォーカスを移す
@@ -142,7 +142,7 @@ function M.decide(char, shift, role, pane, ctrl, emptyComposer)
     if char == "h" then return { focus = pane == "thread" and "messages" or "sidebar" } end
     if char == "l" then return { focus = "messages" } end
     if not dir then return nil end
-    if pane == "sidebar" then return { section = dir } end
+    if pane == "sidebar" then return { unread = dir } end
     -- メンション・検索などの候補の選択移動（選択中は Slack が候補の項目にフォーカスを移すので、入力欄の外でも送る）。
     -- 空のメッセージ入力欄の ↑ は直前の投稿の編集になるので送らない
     if emptyComposer then return nil end
@@ -351,18 +351,26 @@ local function outlineOf(el)
   return nil
 end
 
+-- 未読のチャンネルの行は、直下の要素に未読のクラスが付く（折りたたんだセクションの見出しにも付くので見出しは除く）
+local function isUnreadRow(row)
+  local id = row:attributeValue("AXDOMIdentifier") or ""
+  if id:sub(1, #SECTION_HEADING_ID_PREFIX) == SECTION_HEADING_ID_PREFIX then return false end
+  for _, child in ipairs(row:attributeValue("AXChildren") or {}) do
+    if hasClass(child, UNREAD_CHANNEL_CLASS) then return true end
+  end
+  return false
+end
+
 -- Slack はサイドバーのカーソル位置を自前で持っており、AX でフォーカスを移しても追従せずフォーカス枠も出ない。
--- そのため最寄りのセクション見出しまでの行数を数え、その回数だけ矢印キーを送る
-local function sectionKeyEvents(focused, dir)
+-- そのため最寄りの未読のチャンネルまでの行数を数え、その回数だけ矢印キーを送る
+local function unreadKeyEvents(focused, dir)
   local outline = outlineOf(focused)
   if not outline then return nil end
-  local isHeading, current = {}, nil
-  for i, row in ipairs(sidebarRows(outline)) do
-    local id = row:attributeValue("AXDOMIdentifier") or ""
-    isHeading[i] = id:sub(1, #SECTION_HEADING_ID_PREFIX) == SECTION_HEADING_ID_PREFIX
-    if row == focused then current = i end
+  local rows, current = sidebarRows(outline), nil
+  for i, row in ipairs(rows) do
+    if row == focused then current = i break end
   end
-  local steps = current and M.headingSteps(isHeading, current, dir)
+  local steps = current and M.stepsUntil(#rows, current, dir, function(i) return isUnreadRow(rows[i]) end)
   if not steps then return nil end
   local events = {}
   for _ = 1, math.abs(steps) do
@@ -389,7 +397,9 @@ local function openThread(message)
     button:performAction("AXPress")
     return true
   end
-  if not messageItemOf(message) then return false end
+  -- Tab で選んだリンク・添付ファイル（AXLink）や返信元スレッド（AXButton）では、Enter をそのまま通して開く
+  local role = message:attributeValue("AXRole")
+  if role == "AXLink" or role == "AXButton" or not messageItemOf(message) then return false end
   return true, keyEvents({}, REPLY_IN_THREAD_KEY)
 end
 
@@ -633,8 +643,8 @@ local function onKeyDown(e)
   local action = M.decide(char, flags.shift == true, role, pane, flags.ctrl == true, emptyComposer)
   if not action then return false end
   if action.press then return true, keyEvents(action.pressMods, action.press) end
-  if action.section then
-    local events = sectionKeyEvents(focused, action.section)
+  if action.unread then
+    local events = unreadKeyEvents(focused, action.unread)
     if not events then return true end
     return true, events
   end
@@ -703,7 +713,7 @@ if not hs then
     a, b = a or {}, b or {}
     return a.key == b.key and a.scroll == b.scroll and a.focus == b.focus and a.passthrough == b.passthrough
       and a.openThread == b.openThread and a.cycleLink == b.cycleLink and a.waitForInput == b.waitForInput
-      and a.section == b.section and a.press == b.press
+      and a.unread == b.unread and a.press == b.press
       and table.concat(a.pressMods or {}, "+") == table.concat(b.pressMods or {}, "+")
   end
   local cases = {
@@ -730,8 +740,8 @@ if not hs then
     { "k", false, "AXRow", "sidebar", { key = "up" } },
     { "j", true, "AXRow", "sidebar", { scroll = 1 } },
     { "k", true, "AXRow", "sidebar", { scroll = -1 } },
-    { "j", false, "AXRow", "sidebar", { section = 1 }, true },
-    { "k", false, "AXRow", "sidebar", { section = -1 }, true },
+    { "j", false, "AXRow", "sidebar", { unread = 1 }, true }, -- サイドバーの Ctrl+j/k は未読のチャンネルへ
+    { "k", false, "AXRow", "sidebar", { unread = -1 }, true },
     -- 候補の選択中は Slack が候補の項目（AXStaticText）にフォーカスを移すので、入力欄の外でも Ctrl+j/k は ↓/↑
     { "j", false, "AXStaticText", nil, { press = "down" }, true },
     { "k", false, "AXGroup", nil, { press = "up" }, true },
@@ -773,14 +783,14 @@ if not hs then
   assert(M.threadKey("threads_view_C0820JC79L2-1792736015.782369-1792841681.776799") == "C0820JC79L2-1792736015.782369")
   assert(M.threadKey("threads_view_footer-D01U6FLSJ4Q-1792736015.782369") == "D01U6FLSJ4Q-1792736015.782369")
   assert(M.threadKey("message-list_1792484052.356979") == nil)
-  -- サイドバーを上から並べたときに各行がセクション見出しかどうか（static, static, 見出しA, ch, ch, 見出しB, 見出しC, ch）
-  local headings = { false, false, true, false, false, true, true, false }
-  assert(M.headingSteps(headings, 1, 1) == 2)
-  assert(M.headingSteps(headings, 3, 1) == 3)
-  assert(M.headingSteps(headings, 7, 1) == nil)
-  assert(M.headingSteps(headings, 5, -1) == -2) -- セクション内のチャンネルからはその見出しへ
-  assert(M.headingSteps(headings, 6, -1) == -3)
-  assert(M.headingSteps(headings, 3, -1) == nil)
+  -- サイドバーを上から並べたときに各行が未読のチャンネルかどうか
+  local unread = { false, true, false, false, true, false }
+  local function isUnread(i) return unread[i] end
+  assert(M.stepsUntil(#unread, 1, 1, isUnread) == 1)
+  assert(M.stepsUntil(#unread, 2, 1, isUnread) == 3)
+  assert(M.stepsUntil(#unread, 5, 1, isUnread) == nil) -- これより下に未読はない
+  assert(M.stepsUntil(#unread, 6, -1, isUnread) == -1)
+  assert(M.stepsUntil(#unread, 2, -1, isUnread) == nil)
   local ids = { "message-list_1.1", "message-list_2.2", "message-list_bottomSpacer" }
   assert(M.nextMessageIndex(ids, 1, 1) == 2)
   assert(M.nextMessageIndex(ids, 2, 1) == nil)
