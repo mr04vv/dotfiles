@@ -33,6 +33,8 @@ local HANDLED_KEYS = { j = true, k = true, h = true, l = true, i = true, f = tru
 -- Slack の検索のショートカット（Cmd+G）
 local SEARCH_KEY = "g"
 local SEARCH_MODS = { "cmd" }
+-- 選択中のメッセージをスレッドで開く Slack のショートカット
+local REPLY_IN_THREAD_KEY = "t"
 local TEXT_ROLES = { AXTextArea = true, AXTextField = true, AXComboBox = true, AXSearchField = true }
 local SIDEBAR_CLASS = "p-channel_sidebar"
 -- スレッド一覧などのページは行自体に、チャンネルは行の子要素に選択中クラスが付く
@@ -370,13 +372,6 @@ local function sectionKeyEvents(focused, dir)
 end
 
 -- 返信があるメッセージなら「N件の返信」ボタンを押してスレッドを開く
-local function openThread(message)
-  local button = findFirst(message, function(el) return hasClass(el, REPLY_COUNT_CLASS) end, MAX_SEARCH_DEPTH)
-  if not button then return false end
-  button:performAction("AXPress")
-  return true
-end
-
 local function messageItemOf(el)
   for _ = 1, MAX_ANCESTOR_DEPTH do
     if not el then return nil end
@@ -385,6 +380,17 @@ local function messageItemOf(el)
     el = el:attributeValue("AXParent")
   end
   return nil
+end
+
+-- スレッドがあれば返信数のボタンを押し、なければ Slack の「スレッドで返信」（選択中のメッセージで T）を送る
+local function openThread(message)
+  local button = findFirst(message, function(el) return hasClass(el, REPLY_COUNT_CLASS) end, MAX_SEARCH_DEPTH)
+  if button then
+    button:performAction("AXPress")
+    return true
+  end
+  if not messageItemOf(message) then return false end
+  return true, keyEvents({}, REPLY_IN_THREAD_KEY)
 end
 
 -- 本文のリンク・チャンネル名・添付ファイル（いずれも AXLink）と返信元スレッドを巡回対象にする
