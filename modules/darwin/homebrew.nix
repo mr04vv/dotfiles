@@ -27,7 +27,6 @@
       "microsoft-edge"
 
       # Development Tools
-      "cursor"              # AI-powered code editor
       "bruno"               # API client
       "docker-desktop"      # Docker Desktop
       "tableplus"           # Database GUI
