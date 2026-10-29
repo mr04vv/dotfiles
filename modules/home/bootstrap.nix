@@ -6,6 +6,7 @@ let
   home = config.home.homeDirectory;
   localBin = "${home}/.local/bin";
   dotfiles = "${home}/dotfiles";
+  agentConfig = "${home}/src/github.com/mr04vv/agent-config";
   # Activation runs with a bare PATH. ~/.local/bin is on it so the installers
   # see it already there and leave the Home Manager-owned shell rc alone.
   path = lib.makeBinPath (with pkgs; [ curl coreutils ]) + ":${localBin}:/usr/bin:/bin";
@@ -47,6 +48,17 @@ in
           printf '%s\n' "$missing" | run ghq get --parallel \
             || echo "Some repositories failed to clone; see above" >&2
         fi
+      fi
+    )
+  '';
+
+  # Links the Claude Code and Codex config from agent-config. install.sh is
+  # safe to re-run and needs a Python with tomllib (3.11+).
+  home.activation.agentConfig = lib.hm.dag.entryAfter [ "cloneRepos" ] ''
+    (
+      export PATH=${lib.makeBinPath (with pkgs; [ python3 coreutils findutils ])}:/usr/bin:/bin:$PATH
+      if [ -x ${agentConfig}/install.sh ]; then
+        run ${agentConfig}/install.sh || echo "agent-config install.sh failed; see above" >&2
       fi
     )
   '';
