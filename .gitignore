@@ -28,3 +28,6 @@ temp/
 # Python
 __pycache__/
 *.py[cod]
+
+# Work and private repository list (kept out of this public repo)
+repos.private.txt
