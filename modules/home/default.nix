@@ -74,6 +74,8 @@
     gnumake
     autoconf
     libtool
+    cmake
+    ninja
 
     # ============================================================================
     # Programming Languages & Runtimes
