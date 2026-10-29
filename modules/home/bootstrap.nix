@@ -5,6 +5,7 @@
 let
   home = config.home.homeDirectory;
   localBin = "${home}/.local/bin";
+  dotfiles = "${home}/dotfiles";
   # Activation runs with a bare PATH. ~/.local/bin is on it so the installers
   # see it already there and leave the Home Manager-owned shell rc alone.
   path = lib.makeBinPath (with pkgs; [ curl coreutils ]) + ":${localBin}:/usr/bin:/bin";
@@ -22,6 +23,30 @@ in
       if [ ! -x ${localBin}/codex ]; then
         run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' </dev/null \
           || echo "Codex install failed; run: curl -fsSL https://chatgpt.com/codex/install.sh | sh" >&2
+      fi
+    )
+  '';
+
+  # Clones what repos.txt and repos.private.txt list and is not there yet. The
+  # lists are read at activation time: repos.private.txt is gitignored and must
+  # not end up in the world-readable Nix store. Private repositories need the gh
+  # login, so the step waits for it.
+  home.activation.cloneRepos = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    (
+      export PATH=${lib.makeBinPath (with pkgs; [ git gh ghq coreutils ])}:$PATH
+      if ! gh auth status >/dev/null 2>&1; then
+        echo "Skipping repository clone: run gh auth login, then rebuild" >&2
+      else
+        root=$(ghq root)
+        missing=$(for list in ${dotfiles}/repos.txt ${dotfiles}/repos.private.txt; do
+          [ -f "$list" ] && cat "$list"
+        done | while read -r repo; do
+          [ -n "$repo" ] && [ ! -d "$root/$repo" ] && echo "$repo"
+        done)
+        if [ -n "$missing" ]; then
+          printf '%s\n' "$missing" | run ghq get --parallel \
+            || echo "Some repositories failed to clone; see above" >&2
+        fi
       fi
     )
   '';
