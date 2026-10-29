@@ -24,8 +24,14 @@
       # Init default branch
       init.defaultBranch = "main";
 
+      # Remove remote-tracking branches deleted on the remote
+      fetch.prune = true;
+
+      # Fetch GitHub over HTTPS (gh auth) even for SSH URLs
+      url."https://github.com/".insteadOf = "git@github.com:";
+
       # ghq root
-      ghq.root = "~/dev";
+      ghq.root = "~/src";
 
       # Git aliases
       alias = {
