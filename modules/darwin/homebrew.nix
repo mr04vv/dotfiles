@@ -30,7 +30,6 @@
       "cursor"              # AI-powered code editor
       "bruno"               # API client
       "docker-desktop"      # Docker Desktop
-      "wezterm"             # Terminal emulator
       "tableplus"           # Database GUI
       "sequel-ace"          # MySQL GUI
 
@@ -42,7 +41,6 @@
       # Productivity
       "raycast"             # Spotlight replacement
       "amethyst"            # Tiling window manager
-      "karabiner-elements"  # Keyboard customizer
 
       # Hardware-specific
       "logi-options+"       # Logitech Options+
