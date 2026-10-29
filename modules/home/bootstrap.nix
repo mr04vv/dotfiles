@@ -7,6 +7,7 @@ let
   localBin = "${home}/.local/bin";
   dotfiles = "${home}/dotfiles";
   agentConfig = "${home}/src/github.com/mr04vv/agent-config";
+  todoSessions = "${home}/src/github.com/mr04vv/claude-todo-sessions";
   # Activation runs with a bare PATH. ~/.local/bin is on it so the installers
   # see it already there and leave the Home Manager-owned shell rc alone.
   path = lib.makeBinPath (with pkgs; [ curl coreutils ]) + ":${localBin}:/usr/bin:/bin";
@@ -59,6 +60,30 @@ in
       export PATH=${lib.makeBinPath (with pkgs; [ python3 coreutils findutils ])}:/usr/bin:/bin:$PATH
       if [ -x ${agentConfig}/install.sh ]; then
         run ${agentConfig}/install.sh || echo "agent-config install.sh failed; see above" >&2
+      fi
+    )
+  '';
+
+  # The todo-sessions plugin's MCP server is a symlink to target/release/cts,
+  # which a clone does not have, so build it before installing the plugin.
+  # The marketplace and the enabled flag come from agent-config's settings.json.
+  # The build links with /usr/bin/cc (the repo's .cargo/config.toml). Only cts
+  # is built: the workspace's Tauri app needs the frontend and Chromium too.
+  home.activation.todoSessionsPlugin = lib.hm.dag.entryAfter [ "agentClis" "agentConfig" ] ''
+    (
+      export PATH=${lib.makeBinPath (with pkgs; [ rustup coreutils gnugrep ])}:/usr/bin:/bin:$PATH
+      if [ -d ${todoSessions} ] && [ -x ${localBin}/claude ]; then
+        if [ ! -x ${todoSessions}/target/release/cts ]; then
+          rustup show active-toolchain >/dev/null 2>&1 || run rustup default stable
+          (cd ${todoSessions} && run cargo build --release -p cts) \
+            || echo "cts build failed; run cargo build --release -p cts in ${todoSessions}" >&2
+        fi
+        if [ -x ${todoSessions}/target/release/cts ] \
+          && ! grep -qs '"todo-sessions@claude-todo-sessions"' ${home}/.claude/plugins/installed_plugins.json; then
+          { run ${localBin}/claude plugin marketplace add ${todoSessions} \
+            && run ${localBin}/claude plugin install todo-sessions@claude-todo-sessions; } </dev/null \
+            || echo "todo-sessions plugin install failed; see above" >&2
+        fi
       fi
     )
   '';
