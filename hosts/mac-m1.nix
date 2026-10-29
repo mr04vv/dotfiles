@@ -1,6 +1,8 @@
 { config, pkgs, ... }:
 
 {
+  imports = [ ../modules/home/bootstrap.nix ];
+
   # M1 Mac specific packages and configuration
   home.packages = with pkgs; [
     # ARM development tools (M1/M2 Mac only)
