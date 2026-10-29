@@ -139,9 +139,6 @@
     # Shell aliases (from existing config)
     shellAliases = {
       nnn = "nnn -e -aP p";
-      ls = "eza";
-      cat = "bat";
-      grep = "rg";
       cdghq = "cd $(ghq root)/$(ghq list | peco)";
       lg = "lazygit";
       codei = "code-insiders";
