@@ -19,8 +19,6 @@ github.com/mr04vv/agent-config
 github.com/mr04vv/blog
 github.com/mr04vv/bruno
 github.com/mr04vv/claude-todo-sessions
-github.com/mr04vv/claude-todo-sessions-notebook
-github.com/mr04vv/claude-todo-sessions-port
 github.com/mr04vv/content
 github.com/mr04vv/dev-quest
 github.com/mr04vv/durable-objects-tldraw
