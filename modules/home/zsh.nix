@@ -144,6 +144,8 @@
       grep = "rg";
       cdghq = "cd $(ghq root)/$(ghq list | peco)";
       lg = "lazygit";
+      code = "cursor";
+      codei = "code-insiders";
     };
 
     # History settings (custom path for compatibility)
