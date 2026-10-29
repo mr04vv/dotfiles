@@ -28,6 +28,11 @@ local ESCAPE_FOCUS_DELAY = 0.05
 -- チャンネルを開いた後、Slack が入力欄にフォーカスするのとメッセージが読み込まれるのを待つ間隔（秒）と最大回数
 local CHANNEL_SWITCH_POLL_INTERVAL = 0.1
 local CHANNEL_SWITCH_MAX_POLLS = 30
+-- チャンネルを開いた後にフォーカスが外れたままなら、この回数待ってからメッセージへ移す
+local FOCUS_LOST_POLLS = 5
+-- 開いたチャンネルを最新の投稿まで送るとき、1 回にスクロールする行数と最大回数
+local LATEST_SCROLL_LINES = 300
+local LATEST_MAX_SCROLLS = 20
 local CTRL_KEYS = { j = true, k = true, h = true, l = true }
 local HANDLED_KEYS = { j = true, k = true, h = true, l = true, i = true, f = true, escape = true, ["return"] = true, tab = true }
 -- Slack の検索のショートカット（Cmd+G）
@@ -273,14 +278,14 @@ local function focusItem(items, pattern, from, to, step)
     local id = items[i]:attributeValue("AXDOMIdentifier")
     if id and id:match(pattern) then
       items[i]:setAttributeValue("AXFocused", true)
-      return true
+      return items[i]
     end
   end
-  return false
+  return nil
 end
 
 -- チャンネルは最新（末尾）のメッセージ、スレッド一覧は先頭のスレッドにフォーカスする。
--- フォーカスできたら true を返す。silent = true なら見つからなくても通知しない
+-- フォーカスできたらその要素を返す。silent = true なら見つからなくても通知しない
 local function focusMessages(win, silent)
   local pane = findFirst(win, function(el)
     return hasClass(el, MESSAGE_PANE_CLASS) or hasClass(el, THREADS_VIEW_CLASS)
@@ -293,16 +298,10 @@ local function focusMessages(win, silent)
     else
       focused = focusItem(items, MESSAGE_ID_PATTERN, #items, 1, -1)
     end
-    if focused then return true end
+    if focused then return focused end
   end
   if not silent then hs.alert.show("slack_vim: メッセージ一覧が見つかりません") end
-  return false
-end
-
--- キャッシュのないチャンネルはメッセージの読み込みに時間がかかるので、読み込まれるまで繰り返す
-local function focusMessagesWhenLoaded(win, remaining)
-  if focusMessages(win, remaining > 0) or remaining <= 0 then return end
-  hs.timer.doAfter(CHANNEL_SWITCH_POLL_INTERVAL, function() focusMessagesWhenLoaded(win, remaining - 1) end)
+  return nil
 end
 
 -- 修飾キーは mods だけにする（押している Ctrl などが引き継がれると Ctrl+↓ のように別のキーになる）
@@ -560,6 +559,34 @@ local function moveMessage(appEl, focused, dir)
   return true
 end
 
+-- 開いた直後のチャンネルは前回の位置や未読の位置が表示されていて、一覧の末尾が最新の投稿とは限らない。
+-- 末尾の投稿が画面に入るまで下へスクロールしてから、Slack のカーソルを最新の投稿へ運ぶ
+-- （Slack は前回選んでいた投稿にカーソルを置くので、AX でフォーカスするだけではそちらが選ばれたままになる）
+local function focusLatestMessage(appEl, list, remaining)
+  local children, ids, heights = listState(list)
+  local last = M.nextMessageIndex(ids, #ids + 1, -1)
+  if not last then return end
+  if M.isVisible(heights[last]) or remaining <= 0 then
+    stepToTarget(appEl, list, last, appEl:attributeValue("AXFocusedUIElement"))
+    return
+  end
+  local point = centerOf(ancestorWithClass(list, MESSAGE_PANE_CLASS) or list)
+  if point then scrollAt(point, LATEST_SCROLL_LINES / SCROLL_LINES) end
+  hs.timer.doAfter(CHANNEL_SWITCH_POLL_INTERVAL, function() focusLatestMessage(appEl, list, remaining - 1) end)
+end
+
+-- キャッシュのないチャンネルはメッセージの読み込みに時間がかかるので、読み込まれるまで繰り返す
+local function focusMessagesWhenLoaded(appEl, win, remaining)
+  local item = focusMessages(win, remaining > 0)
+  if item then
+    local id = item:attributeValue("AXDOMIdentifier")
+    if id:match(MESSAGE_ID_PATTERN) then focusLatestMessage(appEl, item:attributeValue("AXParent"), LATEST_MAX_SCROLLS) end
+    return
+  end
+  if remaining <= 0 then return end
+  hs.timer.doAfter(CHANNEL_SWITCH_POLL_INTERVAL, function() focusMessagesWhenLoaded(appEl, win, remaining - 1) end)
+end
+
 -- 矢印キーでフォーカスが入力欄に入ってしまったら元の要素に戻す
 local function guardArrow(appEl, previous)
   hs.timer.doAfter(ARROW_GUARD_DELAY, function()
@@ -608,9 +635,12 @@ local function focusInput(win, focused)
   input:setAttributeValue("AXFocused", true)
 end
 
+-- Slack は入力欄のほか、前回選んでいた投稿にフォーカスすることもあるので、サイドバーからフォーカスが移ったら進める。
+-- フォーカスが外れたままになることもあるので、その場合は少し待ってから進める
 local function waitForInputThen(appEl, fn, remaining)
   local focused = appEl:attributeValue("AXFocusedUIElement")
-  if focused and TEXT_ROLES[focused:attributeValue("AXRole")] then return fn() end
+  if focused and not ancestorWithClass(focused, SIDEBAR_CLASS) then return fn() end
+  if focused == nil and remaining <= CHANNEL_SWITCH_MAX_POLLS - FOCUS_LOST_POLLS then return fn() end
   if remaining <= 0 then return end
   hs.timer.doAfter(CHANNEL_SWITCH_POLL_INTERVAL, function() waitForInputThen(appEl, fn, remaining - 1) end)
 end
@@ -678,7 +708,7 @@ local function onKeyDown(e)
     local function run()
       if action.focus == "sidebar" then focusSidebar(win)
       elseif action.focus == "input" then focusInput(win, focused)
-      elseif action.waitForInput then focusMessagesWhenLoaded(win, CHANNEL_SWITCH_MAX_POLLS)
+      elseif action.waitForInput then focusMessagesWhenLoaded(appEl, win, CHANNEL_SWITCH_MAX_POLLS)
       else focusMessages(win) end
     end
     -- ツリー探索は重いので、イベントタップのコールバック外で実行する
