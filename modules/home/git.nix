@@ -30,6 +30,9 @@
       # Fetch GitHub over HTTPS (gh auth) even for SSH URLs
       url."https://github.com/".insteadOf = "git@github.com:";
 
+      # Authenticate GitHub HTTPS with gh's token (the empty entry drops osxkeychain)
+      credential."https://github.com".helper = [ "" "!gh auth git-credential" ];
+
       # ghq root
       ghq.root = "~/src";
 
