@@ -11,6 +11,8 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Installs Homebrew itself, which nix-darwin's homebrew module expects to exist
+    nix-homebrew.url = "github:zhaofengli/nix-homebrew";
     nixos-wsl = {
       url = "github:nix-community/NixOS-WSL";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -27,7 +29,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, nix-darwin, home-manager, nixos-wsl, neovim-nightly-overlay, arto, gh-review-watcher, ... }:
+  outputs = { self, nixpkgs, nix-darwin, nix-homebrew, home-manager, nixos-wsl, neovim-nightly-overlay, arto, gh-review-watcher, ... }:
     let
       hosts = {
         mac-m1 = {
@@ -77,6 +79,17 @@
                 home.stateVersion = "23.11";
               };
               home-manager.extraSpecialArgs = { inherit neovim-nightly-overlay arto gh-review-watcher; };
+            }
+
+            # Homebrew itself (the casks are declared in modules/darwin/homebrew.nix)
+            nix-homebrew.darwinModules.nix-homebrew
+            {
+              nix-homebrew = {
+                enable = true;
+                user = username;
+                # Take over a Homebrew installed earlier with the official script
+                autoMigrate = true;
+              };
             }
 
             # nix-darwin modules
