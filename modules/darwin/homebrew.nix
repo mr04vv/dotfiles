@@ -17,6 +17,7 @@
     taps = [
       # homebrew/cask and homebrew/cask-versions are no longer needed
       # They are built-in to modern Homebrew
+      "fayazara/tap"        # Screendrop
     ];
 
     # GUI Applications (Casks)
@@ -42,12 +43,14 @@
       "claude"              # Claude Desktop (self-updates)
       "raycast"             # Spotlight replacement
       "amethyst"            # Tiling window manager
+      "nani"                # Nani Translate
 
       # Hardware-specific
       "logi-options+"       # Logitech Options+
 
       # Screen Recording
       "screen-studio"       # Screen recorder
+      "fayazara/tap/screendrop" # Screenshot + screen recorder
 
       # Keyboard Firmware
       "qmk-toolbox"         # QMK Toolbox
