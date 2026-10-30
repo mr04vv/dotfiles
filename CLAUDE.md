@@ -26,33 +26,6 @@ nix flake update
 git add <new-file>.nix
 ```
 
-## Architecture
-
-```
-flake.nix                   # Entry point: defines 3 hosts, wires inputs
-├── hosts/
-│   ├── mac-m1.nix          # Host-specific overrides (ARM tools, qmk)
-│   ├── mac-intel.nix       # (currently empty)
-│   └── wsl.nix             # WSL shell setup, AHK/WezTerm configs synced to Windows
-├── modules/
-│   ├── home/               # Home Manager modules (shared across all hosts)
-│   │   ├── default.nix     # Package list + imports all sub-modules
-│   │   ├── git.nix         # Git config, aliases, ghq
-│   │   ├── zsh.nix         # Zsh + Pure prompt, aliases, PATH, zoxide
-│   │   ├── neovim.nix      # Neovim nightly, 80+ plugins, LSP, Copilot (~1500 lines)
-│   │   ├── tmux.nix        # Tmux with vi mode, custom keybinds
-│   │   ├── ghostty.nix     # Ghostty terminal config
-│   │   ├── hammerspoon.nix # Hammerspoon init.lua: window management + loads hammerspoon/*.lua
-│   │   ├── hammerspoon/    # Vim-style keys for Slack (slack_vim.lua) and Chrome/Dia (browser_vim.lua)
-│   │   └── fonts.nix       # Font installation (JetBrains Mono, Noto)
-│   └── darwin/             # nix-darwin modules (macOS only)
-│       ├── default.nix     # Imports + nix config + Touch ID sudo
-│       ├── system.nix      # macOS defaults (Finder, keyboard, trackpad)
-│       ├── dock.nix        # Dock preferences
-│       └── homebrew.nix    # GUI casks only (Arc, Docker, Figma, etc.)
-└── overlays/               # Custom package overlays (currently empty)
-```
-
 ## How to Add a New Tool
 
 1. If Home Manager has a `programs.<tool>` module: create `modules/home/<tool>.nix`, enable the program, and add the import to `modules/home/default.nix`
