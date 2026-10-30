@@ -40,10 +40,12 @@ in
         echo "Skipping repository clone: run gh auth login, then rebuild" >&2
       else
         root=$(ghq root)
+        # if, not &&: activation runs under set -e and pipefail, and a false
+        # test as a loop's last command would abort it.
         missing=$(for list in ${dotfiles}/repos.txt ${dotfiles}/repos.private.txt; do
-          [ -f "$list" ] && cat "$list"
+          if [ -f "$list" ]; then cat "$list"; fi
         done | while read -r repo; do
-          [ -n "$repo" ] && [ ! -d "$root/$repo" ] && echo "$repo"
+          if [ -n "$repo" ] && [ ! -d "$root/$repo" ]; then echo "$repo"; fi
         done)
         if [ -n "$missing" ]; then
           printf '%s\n' "$missing" | run ghq get --parallel \
