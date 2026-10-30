@@ -45,7 +45,6 @@ github.com/mr04vv/usketch
 github.com/negibokken/web-browser-engineering-step-by-step
 github.com/openameba/spindle
 github.com/qdhenry/Claude-Command-Suite
-github.com/raycast/extensions
 github.com/rtoya/bongo-cat-clone
 github.com/shinshin86/aituber-onair
 github.com/shitagaki-lab/see-through
