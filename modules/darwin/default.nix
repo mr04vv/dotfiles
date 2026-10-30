@@ -10,8 +10,14 @@
   # Primary user for per-user defaults
   system.primaryUser = username;
 
-  # Enable zsh
-  programs.zsh.enable = true;
+  # Enable zsh. Prompt and compinit are set up by Home Manager's ~/.zshrc
+  # (Pure + `compinit -C`), so skip the duplicate work in /etc/zshrc.
+  programs.zsh = {
+    enable = true;
+    promptInit = "";
+    enableGlobalCompInit = false;
+    enableBashCompletion = false;
+  };
 
   # Touch ID for sudo
   security.pam.services.sudo_local = {
