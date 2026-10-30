@@ -23,6 +23,7 @@
     casks = [
       # Browsers
       "arc"
+      "thebrowsercompany-dia"
       "firefox"
       "microsoft-edge"
 
