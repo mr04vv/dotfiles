@@ -134,6 +134,9 @@
       NNN_PLUG = "p:preview-tui";
       GOPATH = "$HOME/go";
       PROTO_HOME = "$HOME/.proto";
+      # Share Terraform providers across working directories (used to come
+      # from wevox-infrastructure's mise [env], which needs `mise activate`)
+      TF_PLUGIN_CACHE_DIR = "$HOME/.terraform.d/plugin-cache";
     };
 
     # Shell aliases (from existing config)
@@ -280,13 +283,6 @@
     '';
   };
 
-  # direnv
-  programs.direnv = {
-    enable = true;
-    nix-direnv.enable = true;
-    enableZshIntegration = true;
-  };
-
   # starship is disabled in favor of pure prompt
   programs.starship.enable = false;
 
@@ -308,6 +304,11 @@
 
   # Create zsh cache directory
   home.file.".cache/zsh/.keep" = {
+    text = "";
+  };
+
+  # Terraform does not create TF_PLUGIN_CACHE_DIR itself
+  home.file.".terraform.d/plugin-cache/.keep" = {
     text = "";
   };
 }
