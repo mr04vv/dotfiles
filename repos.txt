@@ -1,10 +1,8 @@
 github.com/EdV4H/dotfiles
 github.com/EdV4H/gh-review-watcher
-github.com/EdV4H/gh-review-watcher-ipfix
 github.com/EdV4H/usketch
 github.com/LambdaNote/support-browsersecurity
 github.com/LazoVelko/Pokemon-Terminal
-github.com/Saki-Kusakabe/test_api
 github.com/WallyNegima/isuconsuburi_isucon13
 github.com/ahujasid/blender-mcp
 github.com/alan2207/bulletproof-react
