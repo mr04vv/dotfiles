@@ -39,6 +39,7 @@
       "obsidian"            # Note-taking
 
       # Productivity
+      "claude"              # Claude Desktop (self-updates)
       "raycast"             # Spotlight replacement
       "amethyst"            # Tiling window manager
 
