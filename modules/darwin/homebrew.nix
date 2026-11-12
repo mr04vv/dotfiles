@@ -40,6 +40,7 @@
       "obsidian"            # Note-taking
 
       # Productivity
+      "chatgpt"             # ChatGPT Desktop (self-updates)
       "claude"              # Claude Desktop (self-updates)
       "raycast"             # Spotlight replacement
       "amethyst"            # Tiling window manager
