@@ -31,6 +31,7 @@
       # Development Tools
       "bruno"               # API client
       "docker-desktop"      # Docker Desktop
+      "postico"             # PostgreSQL GUI
       "tableplus"           # Database GUI
       "sequel-ace"          # MySQL GUI
 
